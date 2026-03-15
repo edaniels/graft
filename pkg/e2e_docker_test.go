@@ -222,9 +222,11 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	test.That(t, conn2.RemoteRoot(), test.ShouldEqual, "/tmp/proj2")
 
 	// Kill the shared remote daemon to trigger reconnect on both connections.
+	// The Shutdown RPC is fire-and-forget: the remote daemon sends SIGINT to
+	// itself, which may tear down the gRPC server before the response is
+	// flushed, causing an EOF or Unavailable error on the client side.
 	remClient = graftv1.NewGraftServiceClient(conn1.daemon.RemoteClientConn())
-	_, err = remClient.Shutdown(t.Context(), &graftv1.ShutdownRequest{})
-	test.That(t, err, test.ShouldBeNil)
+	remClient.Shutdown(t.Context(), &graftv1.ShutdownRequest{}) //nolint:errcheck
 
 	// Trigger reconnect — both connections share a daemon, so only one
 	// reconnect attempt is needed. The daemon's reconnect guard prevents

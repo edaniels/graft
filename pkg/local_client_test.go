@@ -1,11 +1,15 @@
 package graft
 
 import (
+	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"go.viam.com/test"
+	"google.golang.org/grpc"
 
 	"github.com/edaniels/graft/errors"
 	graftv1 "github.com/edaniels/graft/gen/proto/graft/v1"
@@ -45,6 +49,95 @@ func TestNewLocalClientDaemonNotRunning(t *testing.T) {
 	_, _, err := NewLocalClient(t.Context(), os.Stdout, os.Stderr, nil, false, nil)
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, errors.Is(err, ErrDaemonNotRunning), test.ShouldBeTrue)
+}
+
+type minimalStatusServer struct {
+	graftv1.UnimplementedGraftServiceServer
+}
+
+func (s *minimalStatusServer) Status(
+	_ context.Context, _ *graftv1.StatusRequest,
+) (*graftv1.StatusResponse, error) {
+	return &graftv1.StatusResponse{Healthy: true}, nil
+}
+
+func TestWaitForDaemonTimeout(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	err := WaitForDaemon(ctx, sockPath)
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func testSocketPath(t *testing.T, name string) string {
+	t.Helper()
+	// macOS limits unix socket paths to 104 characters, so we cannot use
+	// t.TempDir() (whose paths are too long). Use /tmp directly instead.
+	dir, err := os.MkdirTemp("/tmp", "graft-test-") //nolint:usetesting
+	test.That(t, err, test.ShouldBeNil)
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	return filepath.Join(dir, name)
+}
+
+func TestWaitForDaemonAlreadyRunning(t *testing.T) {
+	sockPath := testSocketPath(t, "test.sock")
+
+	var lc net.ListenConfig
+
+	lis, err := lc.Listen(t.Context(), "unix", sockPath)
+	test.That(t, err, test.ShouldBeNil)
+
+	defer lis.Close()
+
+	grpcServer := grpc.NewServer()
+	graftv1.RegisterGraftServiceServer(grpcServer, &minimalStatusServer{})
+
+	go grpcServer.Serve(lis) //nolint:errcheck
+	defer grpcServer.Stop()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	err = WaitForDaemon(ctx, sockPath)
+	test.That(t, err, test.ShouldBeNil)
+}
+
+func TestWaitForDaemonDelayedStart(t *testing.T) {
+	sockPath := testSocketPath(t, "test.sock")
+
+	ready := make(chan struct{})
+
+	go func() {
+		var lc net.ListenConfig
+
+		lis, lisErr := lc.Listen(t.Context(), "unix", sockPath)
+		if lisErr != nil {
+			return
+		}
+		defer lis.Close()
+
+		grpcServer := grpc.NewServer()
+		graftv1.RegisterGraftServiceServer(grpcServer, &minimalStatusServer{})
+
+		go grpcServer.Serve(lis) //nolint:errcheck
+		defer grpcServer.Stop()
+
+		close(ready)
+		// Keep alive until test context is done.
+		<-t.Context().Done()
+	}()
+
+	// Wait until server is ready before checking.
+	<-ready
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	err := WaitForDaemon(ctx, sockPath)
+	test.That(t, err, test.ShouldBeNil)
 }
 
 func TestVersionMismatchDetection(t *testing.T) {

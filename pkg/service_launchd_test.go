@@ -27,7 +27,7 @@ func TestGeneratePlist(t *testing.T) {
 	plistStr := string(plist)
 
 	// Check label
-	test.That(t, strings.Contains(plistStr, "<string>com.graft.daemon</string>"), test.ShouldBeTrue)
+	test.That(t, strings.Contains(plistStr, "<string>run.graft.daemon</string>"), test.ShouldBeTrue)
 
 	// Check binary path in ProgramArguments
 	test.That(t, strings.Contains(plistStr, "<string>/usr/local/bin/graft</string>"), test.ShouldBeTrue)
@@ -77,7 +77,7 @@ func TestParseLaunchctlListRunning(t *testing.T) {
 	"StandardOutPath" = "/Users/testuser/.local/state/graft/local/logs/out.log";
 	"LimitLoadToSessionType" = "Aqua";
 	"StandardErrorPath" = "/Users/testuser/.local/state/graft/local/logs/error.log";
-	"Label" = "com.graft.daemon";
+	"Label" = "run.graft.daemon";
 	"OnDemand" = false;
 	"LastExitStatus" = 0;
 	"PID" = 12345;
@@ -95,7 +95,7 @@ func TestParseLaunchctlListNotRunning(t *testing.T) {
 	"StandardOutPath" = "/Users/testuser/.local/state/graft/local/logs/out.log";
 	"LimitLoadToSessionType" = "Aqua";
 	"StandardErrorPath" = "/Users/testuser/.local/state/graft/local/logs/error.log";
-	"Label" = "com.graft.daemon";
+	"Label" = "run.graft.daemon";
 	"OnDemand" = false;
 	"LastExitStatus" = 256;
 };`
@@ -128,19 +128,48 @@ func TestInstallWritesPlistAndLoads(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	// Verify plist was written
-	plistPath := filepath.Join(launchAgentsDir, "com.graft.daemon.plist")
+	plistPath := filepath.Join(launchAgentsDir, "run.graft.daemon.plist")
 	data, err := os.ReadFile(plistPath)
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, strings.Contains(string(data), "com.graft.daemon"), test.ShouldBeTrue)
+	test.That(t, strings.Contains(string(data), "run.graft.daemon"), test.ShouldBeTrue)
 
 	// Verify log directory was created
 	_, err = os.Stat(logsDir)
 	test.That(t, err, test.ShouldBeNil)
 
-	// Verify launchctl load was called
-	test.That(t, len(commands), test.ShouldEqual, 1)
-	test.That(t, strings.Contains(commands[0], "launchctl load"), test.ShouldBeTrue)
-	test.That(t, strings.Contains(commands[0], plistPath), test.ShouldBeTrue)
+	// Verify best-effort unload was called before load -w
+	test.That(t, len(commands), test.ShouldEqual, 2)
+	test.That(t, strings.Contains(commands[0], "launchctl unload"), test.ShouldBeTrue)
+	test.That(t, strings.Contains(commands[1], "launchctl load -w"), test.ShouldBeTrue)
+	test.That(t, strings.Contains(commands[1], plistPath), test.ShouldBeTrue)
+}
+
+func TestInstallCleansUpOnLoadFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	launchAgentsDir := filepath.Join(tmpDir, "Library", "LaunchAgents")
+	test.That(t, os.MkdirAll(launchAgentsDir, 0o755), test.ShouldBeNil)
+
+	mgr := &LaunchdServiceManager{
+		homeDir: tmpDir,
+		runCommand: func(_ string, args ...string) ([]byte, error) {
+			cmd := strings.Join(args, " ")
+			if strings.Contains(cmd, "load -w") {
+				// Simulate launchctl load returning exit 0 but printing failure.
+				return []byte("Load failed: 5: Input/output error\n"), nil
+			}
+
+			return nil, nil
+		},
+	}
+
+	err := mgr.Install("/usr/local/bin/graft")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, strings.Contains(err.Error(), "Load failed"), test.ShouldBeTrue)
+
+	// Verify plist was cleaned up.
+	plistPath := filepath.Join(launchAgentsDir, "run.graft.daemon.plist")
+	_, statErr := os.Stat(plistPath)
+	test.That(t, os.IsNotExist(statErr), test.ShouldBeTrue)
 }
 
 func TestUninstallUnloadsAndRemoves(t *testing.T) {
@@ -148,7 +177,7 @@ func TestUninstallUnloadsAndRemoves(t *testing.T) {
 	launchAgentsDir := filepath.Join(tmpDir, "Library", "LaunchAgents")
 	test.That(t, os.MkdirAll(launchAgentsDir, 0o755), test.ShouldBeNil)
 
-	plistPath := filepath.Join(launchAgentsDir, "com.graft.daemon.plist")
+	plistPath := filepath.Join(launchAgentsDir, "run.graft.daemon.plist")
 	test.That(t, os.WriteFile(plistPath, []byte("<plist/>"), FilePerms), test.ShouldBeNil)
 
 	var commands []string
@@ -213,7 +242,7 @@ func TestStatusInstalledButNotLoaded(t *testing.T) {
 	launchAgentsDir := filepath.Join(tmpDir, "Library", "LaunchAgents")
 	test.That(t, os.MkdirAll(launchAgentsDir, 0o755), test.ShouldBeNil)
 
-	plistPath := filepath.Join(launchAgentsDir, "com.graft.daemon.plist")
+	plistPath := filepath.Join(launchAgentsDir, "run.graft.daemon.plist")
 	test.That(t, os.WriteFile(plistPath, []byte("<plist/>"), FilePerms), test.ShouldBeNil)
 
 	mgr := &LaunchdServiceManager{
@@ -236,14 +265,14 @@ func TestStatusRunning(t *testing.T) {
 	launchAgentsDir := filepath.Join(tmpDir, "Library", "LaunchAgents")
 	test.That(t, os.MkdirAll(launchAgentsDir, 0o755), test.ShouldBeNil)
 
-	plistPath := filepath.Join(launchAgentsDir, "com.graft.daemon.plist")
+	plistPath := filepath.Join(launchAgentsDir, "run.graft.daemon.plist")
 	test.That(t, os.WriteFile(plistPath, []byte("<plist/>"), FilePerms), test.ShouldBeNil)
 
 	mgr := &LaunchdServiceManager{
 		homeDir: tmpDir,
 		runCommand: func(_ string, _ ...string) ([]byte, error) {
 			return []byte(`{
-	"Label" = "com.graft.daemon";
+	"Label" = "run.graft.daemon";
 	"PID" = 42;
 	"Program" = "/usr/local/bin/graft";
 };`), nil
@@ -266,7 +295,7 @@ func testLaunchctlCommand(t *testing.T, action func(mgr *LaunchdServiceManager) 
 	launchAgentsDir := filepath.Join(tmpDir, "Library", "LaunchAgents")
 	test.That(t, os.MkdirAll(launchAgentsDir, 0o755), test.ShouldBeNil)
 
-	plistPath := filepath.Join(launchAgentsDir, "com.graft.daemon.plist")
+	plistPath := filepath.Join(launchAgentsDir, "run.graft.daemon.plist")
 	test.That(t, os.WriteFile(plistPath, []byte("<plist/>"), FilePerms), test.ShouldBeNil)
 
 	var commands []string
@@ -288,11 +317,25 @@ func testLaunchctlCommand(t *testing.T, action func(mgr *LaunchdServiceManager) 
 }
 
 func TestStartCallsLaunchctlLoad(t *testing.T) {
-	testLaunchctlCommand(t, (*LaunchdServiceManager).Start, "load")
+	testLaunchctlCommand(t, (*LaunchdServiceManager).Start, "load -w")
 }
 
 func TestStopCallsLaunchctlUnload(t *testing.T) {
 	testLaunchctlCommand(t, (*LaunchdServiceManager).Stop, "unload")
+}
+
+func TestLoadDetectsOutputFailure(t *testing.T) {
+	mgr := &LaunchdServiceManager{
+		homeDir: "/Users/testuser",
+		runCommand: func(_ string, _ ...string) ([]byte, error) {
+			// launchctl load can return exit code 0 but print failure.
+			return []byte("Load failed: 5: Input/output error\n"), nil
+		},
+	}
+
+	err := mgr.launchctlLoad("/fake/path")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, strings.Contains(err.Error(), "Load failed"), test.ShouldBeTrue)
 }
 
 func TestStartNotInstalled(t *testing.T) {
@@ -332,5 +375,5 @@ func TestPlistPathAbsolute(t *testing.T) {
 
 	path := mgr.plistPath()
 	test.That(t, filepath.IsAbs(path), test.ShouldBeTrue)
-	test.That(t, path, test.ShouldEqual, "/Users/testuser/Library/LaunchAgents/com.graft.daemon.plist")
+	test.That(t, path, test.ShouldEqual, "/Users/testuser/Library/LaunchAgents/run.graft.daemon.plist")
 }

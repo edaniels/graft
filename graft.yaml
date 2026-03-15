@@ -1,0 +1,12 @@
+version: v1
+workspace: true
+# forward:
+#   - go
+destinations:
+  dev-pi:
+    host: ec2-3-84-148-224.compute-1.amazonaws.com
+    user: ec2-user
+    syncTo: "~/foo/bar"
+    # setup: |
+    #   #!/usr/bin/env bash
+    #   sudo yum install git gcc-c++

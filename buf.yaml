@@ -1,0 +1,11 @@
+version: v2
+modules:
+  - path: proto
+    name: buf.build/edaniels/graft
+lint:
+  use:
+    - STANDARD
+  enum_zero_value_suffix: _UNKNOWN
+breaking:
+  use:
+    - FILE  

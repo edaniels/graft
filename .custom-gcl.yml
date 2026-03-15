@@ -1,0 +1,4 @@
+version: v2.7.2
+plugins:
+  - module: 'github.com/edaniels/golinters'
+    version: v0.0.6

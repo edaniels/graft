@@ -1,0 +1,7 @@
+tmp
+bin
+!bin/sc_shim
+cmd/scratch
+.DS_Store
+custom-gcl
+/graft

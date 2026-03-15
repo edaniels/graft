@@ -1,0 +1,501 @@
+syntax = "proto3";
+
+package graft.v1;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/edaniels/graft/gen/proto/graftv1";
+
+// GraftService is a monolith service for daemons, local and remote.
+//
+// In the future, separate services disambiguating the roles for a local and remote daemon
+// may be wanted to avoid "directionality confusion". For example, we have
+// a [GraftService.DiscoverCommands] RPC that gathers commands that could be forwarded
+// to a client and this RPC can be sent to a local
+// deamon (user->client->daemon(local)---network--->daemon(remote)) which is strange but
+// also it's entirely possible for a local daemon to service a client as a remote
+// daemon, albeit probably pointless.
+//
+// For now, we'll keep the service combined and you will notice many method that utilize
+// presence/non-presenec of pids and connection names to distinguish where the command
+// is intended to be processed.
+service GraftService {
+  //
+  // Administrative commands
+  //
+
+  // Status returns high-level information about the daemon (local/remote) such
+  // as its health, version, and recent logs.
+  rpc Status(StatusRequest) returns (StatusResponse) {}
+
+  // Ping is a testing endpoint that prints messages to the OOB channel.
+  rpc Ping(PingRequest) returns (PingResponse) {}
+
+  // Shutdown requests that the daemon shuts down.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse) {}
+
+  // Restart requests that the daemon restarts.
+  rpc Restart(RestartRequest) returns (RestartResponse) {}
+
+  // OOBMessages subscribes to a broadcast stream of out-of-band messages that the daemon
+  // can use to send clients information not strictly related to forwarded commands.
+  // For instance, since the daemon handles initialization logic, it's helpful to provide
+  // progress information while an RPC command is running instead of creating complicated
+  // streaming protos that provide this information.
+  //
+  // TODO(erd): Evaluate if the correlation id concept is needed. It doesn't seem like it is
+  // and the demuxing could be eliminated without it.
+  rpc OOBMessages(OOBMessagesRequest) returns (stream OOBMessagesResponse) {}
+
+  //
+  // Connection commands
+  //
+
+  // ListConnections lists all connections this daemon is responsible for.
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse) {}
+
+  // InitializeSSHConnection initializes an SSH based connection.
+  rpc InitializeSSHConnection(InitializeSSHConnectionRequest) returns (InitializeSSHConnectionResponse) {}
+
+  // InitializeContainerConnection initializations a docker based connection.
+  rpc InitializeContainerConnection(InitializeContainerConnectionRequest) returns (InitializeContainerConnectionResponse) {}
+
+  // RemoveConnection tears down the specified connection.
+  rpc RemoveConnection(RemoveConnectionRequest) returns (RemoveConnectionResponse) {}
+
+  // DiscoverCommands streams all commands a daemon thinks it can allow a client to forward.
+  rpc DiscoverCommands(DiscoverCommandsRequest) returns (stream DiscoverCommandsResponse) {}
+
+  // UpdateConnectionRoots updates the local and/or remote root directories for a connection.
+  rpc UpdateConnectionRoots(UpdateConnectionRootsRequest) returns (UpdateConnectionRootsResponse) {}
+
+  // UpdateConnectionForwardCommands adds the specified commands to be forwarded for a connection.
+  //
+  // TODO(erd): should this be replace or insert?
+  rpc UpdateConnectionForwardCommands(UpdateConnectionForwardCommandsRequest) returns (UpdateConnectionForwardCommandsResponse) {}
+
+  // SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
+  rpc SyncFilesToConnection(SyncFilesToConnectionRequest) returns (SyncFilesToConnectionResponse) {}
+
+  // DumpLogs dumps all found daemon logs as raw text.
+  rpc DumpLogs(DumpLogsRequest) returns (DumpLogsResponse) {}
+
+  // SyncFilesToConnectionProtocol is used for the underlying mutagen sync protocol that bypasses
+  // the mutagen daemon installation process. We do this bypass because:
+  // - we were curious how easy it was to do this given mutagen/graft are both written in go
+  // - it affords us one installation, making updates and maintenance a lot easier
+  // - allows us to move away from mutagen if needed
+  //
+  // The protocol is binary/opaque to us. It's a protobuf based protocol but not gRPC. We could actually
+  // implement the idea of local/remote endpoints but it's a lot easier to just pass it through for now.
+  rpc SyncFilesToConnectionProtocol(stream SyncFilesToConnectionProtocolRequest) returns (stream SyncFilesToConnectionProtocolResponse) {}
+
+  // TODO(erd): Consider integrating ForwardSSHAgent into connection initialization.
+  rpc ForwardSSHAgent(stream ForwardSSHAgentRequest) returns (stream ForwardSSHAgentResponse) {}
+
+  //
+  // Port forwarding
+  //
+  // Automatic port forwarding detects listening ports on the remote daemon and forwards
+  // them back to the local machine so that `localhost:<port>` just works.
+  //
+  // The system has two parts:
+  //
+  // 1. Detection (WatchPorts): The remote daemon scans /proc/net/tcp{,6} and /proc/net/udp{,6}
+  //    for listening sockets owned by commands it spawned. When the set of detected ports changes,
+  //    it pushes a full snapshot to the local daemon via WatchPorts. The local daemon diffs snapshots
+  //    to start/stop local listeners.
+  //
+  // 2. Relay (ForwardPort): For each accepted TCP connection (or UDP session) on a local listener,
+  //    the local daemon opens a ForwardPort bidirectional stream to the remote. The first message
+  //    identifies the target port; subsequent messages relay raw bytes in both directions, just like
+  //    ForwardSSHAgent does for SSH agent forwarding.
+  //
+  // If a local port is already in use, the forward is marked as a conflict and reported in
+  // `graft status`. No automatic port remapping is attempted.
+  //
+
+  // WatchPorts is a server-streaming RPC called by the local daemon against the remote daemon.
+  // The remote daemon pushes a full snapshot of listening ports whenever the set changes.
+  rpc WatchPorts(WatchPortsRequest) returns (stream WatchPortsResponse) {}
+
+  // ForwardPort is a bidirectional streaming RPC for relaying a single TCP connection or UDP
+  // session between local and remote. The first ForwardPortRequest must contain a ForwardPortStart
+  // message identifying the target; subsequent messages carry raw payload bytes.
+  rpc ForwardPort(stream ForwardPortRequest) returns (stream ForwardPortResponse) {}
+
+  //
+  // Session commands
+  //
+
+  // SessionReportCWD informs the daemon of a session's current working directory so that it can be mirrored on the remote.
+  rpc SessionReportCWD(SessionReportCWDRequest) returns (SessionReportCWDResponse) {}
+
+  // SessionWhich asks which connection can handle the given command.
+  rpc SessionWhich(SessionWhichRequest) returns (SessionWhichResponse) {}
+
+  // SessionShimmedCommands returns all commands that should be shimmed for a session across all established connections.
+  rpc SessionShimmedCommands(SessionShimmedCommandsRequest) returns (SessionShimmedCommandsResponse) {}
+
+  // SessionSelectConnection returns the best connection for session.
+  rpc SessionSelectConnection(SessionSelectConnectionRequest) returns (SessionSelectConnectionResponse) {}
+
+  //
+  // Command
+  //
+
+  // RunCommand runs the given command on the daemon (locally or forwarded to remote) and exposes std[in/out/err] streams to use.
+  //
+  // Additionally, the client can control tty information like terminal resizing.
+  rpc RunCommand(stream RunCommandRequest) returns (stream RunCommandResponse) {}
+}
+
+message VersionInfo {
+  // the daemon version.
+  optional string version = 1;
+  // the underlying source tree revision.
+  optional string vcs_revision = 2;
+  // the time of the last update to the source tree.
+  optional string vcs_time = 3;
+  // whether or not the source tree is in a dirty/modified state.
+  optional bool vcs_modified = 4;
+  // additional notes not used for comparison.
+  optional string notes = 5;
+}
+
+message StatusRequest {
+  // the connection to get the daemon status of. if unset, it's the local daemon.
+  optional string connection_name = 1;
+}
+
+message StatusResponse {
+  // whether or not the daemon is fit to respond to requests.
+  bool healthy = 1;
+  // this daemon's version.
+  VersionInfo version_info = 2;
+  // how long the daemon been up for.
+  google.protobuf.Duration uptime = 3;
+
+  // a rolling window of recent logs.
+  repeated string recent_logs = 4;
+}
+
+message PingRequest {
+  int64 local_time_unix_nanos = 1;
+}
+
+message PingResponse {
+  int64 local_time_unix_nanos = 1;
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}
+
+message RestartRequest {}
+
+message RestartResponse {}
+
+message OOBMessagesRequest {}
+
+message OOBMessagesResponse {
+  string correlation_id = 1;
+  bytes messages = 2;
+}
+
+enum ConnectionState {
+  CONNECTION_STATE_UNKNOWN = 0;
+  CONNECTION_STATE_INITIALIZING = 1;
+  CONNECTION_STATE_CONNECTED = 2;
+  CONNECTION_STATE_FAILED = 3;
+  CONNECTION_STATE_CLOSED = 4;
+  CONNECTION_STATE_RECONNECTING = 5;
+}
+
+message SyncStagingProgress {
+  uint64 received_files = 1;
+  uint64 expected_files = 2;
+  uint64 total_received_size = 3;
+  uint64 total_expected_size = 4;
+  string current_path = 5;
+  uint64 current_received_size = 6;
+  uint64 current_expected_size = 7;
+}
+
+message SyncConflict {
+  string path = 1;
+  repeated string local_changes = 2;
+  repeated string remote_changes = 3;
+}
+
+message SyncProblem {
+  string path = 1;
+  string error = 2;
+}
+
+message SyncStatus {
+  string from_local = 1;
+  string to_remote = 2;
+  bool paused = 3;
+  string status = 4;
+  string last_error = 5;
+  repeated SyncConflict conflicts = 6;
+  repeated SyncProblem problems = 7;
+  SyncStagingProgress staging_progress = 8;
+}
+
+message ConnectionStatus {
+  ConnectionState state = 1;
+  optional string state_reason = 2;
+  bool current = 3;
+  repeated SyncStatus sync_statuses = 4;
+  string safe_destination = 5;
+  repeated PortForwardStatus port_forward_statuses = 6;
+}
+
+message ListConnectionsRequest {
+  uint64 pid = 1;
+}
+
+message ListConnectionsResponse {
+  map<string, ConnectionStatus> connections = 1;
+}
+
+message InitializeSSHConnectionRequest {
+  string cwd = 1;
+  string name = 2;
+  string destination = 3;
+  string user_name = 4;
+  uint64 pid = 5;
+  string local_root = 6;
+  string remote_root = 7;
+}
+
+message InitializeSSHConnectionResponse {
+  string name = 1;
+}
+
+message InitializeContainerConnectionRequest {
+  string cwd = 1;
+  string name = 2;
+  string image_tag = 3;
+  string operating_system = 4;
+  string user_name = 5;
+  string local_root = 6;
+  string remote_root = 7;
+}
+
+message InitializeContainerConnectionResponse {
+  string name = 1;
+}
+
+message RemoveConnectionRequest {
+  string name = 1;
+}
+
+message RemoveConnectionResponse {}
+
+message DiscoverCommandsRequest {
+  repeated string allow_list = 1; // only discover commands from this list, if specified; otherwise everything is fair game.
+}
+
+message DiscoverCommandsResponse {
+  repeated string commands = 1;
+}
+
+message UpdateConnectionRootsRequest {
+  string connection_name = 1;
+  string local_root = 2;
+  string remote_root = 3;
+}
+
+message UpdateConnectionRootsResponse {}
+
+message UpdateConnectionForwardCommandsRequest {
+  string connection_name = 1;
+  repeated string commands = 2;
+  bool prefix_commands = 3;
+}
+
+message UpdateConnectionForwardCommandsResponse {}
+
+message SyncFilesToConnectionRequest {
+  string source_dir = 1;
+  string dest_dir = 2;
+  string to_connection_name = 3;
+}
+
+message SyncFilesToConnectionResponse {}
+
+message SyncFilesToConnectionProtocolRequest {
+  bytes data = 1;
+}
+
+message SyncFilesToConnectionProtocolResponse {
+  bytes data = 1;
+}
+
+message DumpLogsRequest {
+  string connection_name = 1;
+}
+
+message DumpLogsResponse {
+  string stdout = 1;
+  string stderr = 2;
+}
+
+message ForwardSSHAgentRequest {
+  bytes data = 1;
+  // connection_name identifies which connection to forward the SSH agent to.
+  // Only used in the first message of the stream; ignored on subsequent messages.
+  string connection_name = 2;
+}
+
+message ForwardSSHAgentResponse {
+  bytes data = 1;
+}
+
+message SessionReportCWDRequest {
+  uint64 pid = 1;
+  string cwd = 2;
+}
+
+message SessionReportCWDResponse {}
+
+message SessionWhichRequest {
+  uint64 pid = 1;
+  string command = 2;
+}
+
+message SessionWhichResponse {
+  string connection_name = 1;
+  string remote_path = 2;
+}
+
+message SessionSelectConnectionRequest {
+  uint64 pid = 1;
+  string cwd = 2;
+}
+
+message PathRemapping {
+  string from_prefix = 1;
+  string to_prefix = 2;
+}
+
+message SessionSelectConnectionResponse {
+  string connection_name = 1;
+  repeated PathRemapping path_remappings = 2;
+}
+
+message CommandForwarding {
+  string local = 1;
+  string remote = 2;
+}
+
+message CommandForwardings {
+  repeated CommandForwarding commands = 1;
+}
+
+message SessionShimmedCommandsRequest {
+  uint64 pid = 1;
+  string cwd = 2;
+}
+
+message SessionShimmedCommandsResponse {
+  map<string, CommandForwardings> destination_commands = 1;
+}
+
+message StartCommand {
+  uint64 pid = 1; // local pid at invocation site; required
+  string connection_name = 2; // connection name to send command to; optional; inferred if unset
+  string cwd = 3; // current local working directory at invocation site; required
+  bool shell = 4; // start a shell; optional, mutually exclusive with command/arguments; required
+  bool exact_command = 5; // whether or not to use shims to determine actual command; optional
+  string command = 6; // the command to execute, mutually exclusive with shell; required
+  repeated string arguments = 7; // arguments for the command
+  bool sudo = 8; // execute with sudo
+  repeated string extra_env = 9;
+
+  bool allocate_pty = 10; // whether or not to allocate a pseudo terminal.
+  bool redirect_stdout = 11; // this redirects the stdout of a pty to the bidi command itself.
+  bool redirect_stderr = 12; // this redirects the stderr of a pty to the bidi command itself.
+}
+
+// Set an environment variable
+message SetEnvVar {
+  string key = 1; // env var name
+  string value = 2; // env var value
+}
+
+// Update the size of the window
+message WindowChange {
+  int64 height = 1; // new height
+  int64 width = 2; // new width
+}
+
+message RunCommandRequest {
+  oneof data {
+    StartCommand start = 1;
+    bytes stdin = 2;
+    string signal = 3;
+    SetEnvVar env_var = 4;
+    WindowChange window_change = 5;
+  }
+}
+
+message CommandStarted {}
+
+message RunCommandResponse {
+  oneof data {
+    bytes stdout = 1;
+    bytes stderr = 2;
+    int64 exit_status = 3;
+    CommandStarted started = 4;
+  }
+}
+
+// PortInfo describes a single listening port detected on the remote.
+message PortInfo {
+  uint32 port = 1; // the listening port number
+  string host = 2; // bind address (e.g. "0.0.0.0", "::") as hex from /proc/net
+  string protocol = 3; // "tcp" or "udp"
+}
+
+message WatchPortsRequest {}
+
+// WatchPortsResponse carries a full snapshot of all listening ports each time
+// the set changes. An empty list means no ports are currently listening.
+message WatchPortsResponse {
+  repeated PortInfo ports = 1;
+}
+
+// ForwardPortRequest carries data for a single forwarded connection/session.
+// The first message must contain a ForwardPortStart; all subsequent messages
+// carry raw payload bytes.
+message ForwardPortRequest {
+  oneof data {
+    ForwardPortStart start = 1;
+    bytes payload = 2;
+  }
+}
+
+// ForwardPortStart identifies the target port to connect to on the remote.
+message ForwardPortStart {
+  uint32 port = 1;
+  string host = 2;
+  string protocol = 3; // "tcp" or "udp"
+}
+
+// ForwardPortResponse carries raw payload bytes from the remote back to local.
+message ForwardPortResponse {
+  bytes payload = 1;
+}
+
+// PortForwardStatus is the status of a single port forward, shown in `graft status`.
+message PortForwardStatus {
+  uint32 remote_port = 1;
+  uint32 local_port = 2;
+  string protocol = 3; // "tcp" or "udp"
+  bool conflict = 4;
+  string conflict_reason = 5;
+}

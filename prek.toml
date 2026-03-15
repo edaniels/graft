@@ -1,0 +1,45 @@
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+hooks = [
+  { id = "check-yaml" },
+  { id = "end-of-file-fixer" },
+]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "buf-format"
+name = "buf format"
+entry = "buf format -w"
+language = "system"
+pass_filenames = false
+
+[[repos.hooks]]
+id = "buf-lint"
+name = "buf lint"
+entry = "buf lint"
+language = "system"
+pass_filenames = false
+
+[[repos.hooks]]
+id = "just-fmt"
+name = "just fmt"
+entry = "just --fmt"
+language = "system"
+pass_filenames = false
+
+[[repos.hooks]]
+id = "actionlint"
+name = "actionlint"
+entry = "actionlint"
+language = "system"
+pass_filenames = false
+
+[[repos.hooks]]
+id = "go-lint"
+name = "go lint"
+entry = "just go-lint"
+language = "system"
+pass_filenames = false

@@ -1,6 +1,6 @@
 # Architecture
 
-Graft is a local-first remote development platform. It runs commands and syncs files on remote machines (SSH or Docker) while making them feel local. This document explains how it works.
+Graft is a local-first remote development platform. It runs commands and syncs files on remote machines (SSH or Docker) while making them feel local.
 
 ## Overview
 
@@ -85,8 +85,8 @@ The local daemon connects to the remote daemon's Unix socket in one of two ways:
 graph LR
     local["Local Daemon"]
 
-    local -->|"① SSH streamlocal (preferred)"| sock["Remote Unix socket"]
-    local -->|"② stdio tunnel (fallback)"| raw["graft raw → socket"]
+    local -->|"1. SSH streamlocal (preferred)"| sock["Remote Unix socket"]
+    local -->|"2. stdio tunnel (fallback)"| raw["graft raw -> socket"]
     sock --> remote["Remote Daemon"]
     raw --> remote
 ```
@@ -242,7 +242,7 @@ When `graft sync` is called, the local daemon:
 2. Creates the remote directory
 3. Creates a mutagen sync session with `TwoWayResolved` mode
 
-Mutagen's sync protocol runs over gRPC via the `SyncFilesToConnectionProtocol` RPC. A stream wrapper translates between mutagen's binary stream protocol and gRPC protobuf messages, allowing mutagen to operate without modification.
+Mutagen's sync protocol runs over gRPC via the `SyncFilesToConnectionProtocol` RPC. A stream wrapper translates between mutagen's binary stream protocol and gRPC protobuf messages so mutagen doesn't need any modifications.
 
 ## Port forwarding
 
@@ -260,7 +260,7 @@ sequenceDiagram
     App->>Local: Connect to localhost:port
     Local->>Remote: ForwardPort (bidirectional stream)
     Remote->>Remote: Dial remote localhost:port
-    Local<-->Remote: Relay traffic
+    Note over Local,Remote: Bidirectional relay
 ```
 
 **Detection** (Linux only): The remote daemon scans `/proc/net/tcp{,6}` and `/proc/net/udp{,6}` for listening sockets owned by commands it spawned. When the set changes, it pushes a snapshot to the local daemon via the `WatchPorts` RPC.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,6 +15,8 @@ import (
 	graft "github.com/edaniels/graft/pkg"
 	"github.com/edaniels/graft/pkg/embedded"
 )
+
+const serviceStartTimeout = 10 * time.Second
 
 var daemonServiceCmd = &cobra.Command{
 	Use:   "service",
@@ -76,6 +79,26 @@ var daemonServiceInstallCmd = &cobra.Command{
 
 		if err := mgr.Install(binaryPath); err != nil {
 			return errors.Wrap(err)
+		}
+
+		sockPath, sockErr := graft.DaemonSocketPathForCurrentHost(graft.ServerRoleLocal)
+		if sockErr != nil {
+			return errors.Wrap(sockErr)
+		}
+
+		fmt.Fprintf(os.Stderr, "Daemon service installed, waiting for daemon to start...\n")
+
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), serviceStartTimeout)
+		defer waitCancel()
+
+		if waitErr := graft.WaitForDaemon(waitCtx, sockPath); waitErr != nil {
+			logsPath, _ := graft.DaemonLogsPathForCurrentHost(graft.ServerRoleLocal) //nolint:errcheck // best-effort for diagnostics
+
+			fmt.Fprintf(os.Stderr, "Daemon service was installed but the daemon failed to start.\n")
+			fmt.Fprintf(os.Stderr, "Check logs:    %s\n", filepath.Join(logsPath, "error.log"))
+			fmt.Fprintf(os.Stderr, "Check service: graft daemon service status\n")
+
+			return errors.New("daemon failed to start")
 		}
 
 		fmt.Fprintf(os.Stderr, "Daemon service installed and started.\n")
@@ -154,6 +177,26 @@ var daemonServiceStartCmd = &cobra.Command{
 
 		if err := mgr.Start(); err != nil {
 			return errors.Wrap(err)
+		}
+
+		sockPath, sockErr := graft.DaemonSocketPathForCurrentHost(graft.ServerRoleLocal)
+		if sockErr != nil {
+			return errors.Wrap(sockErr)
+		}
+
+		fmt.Fprintf(os.Stderr, "Waiting for daemon to start...\n")
+
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), serviceStartTimeout)
+		defer waitCancel()
+
+		if waitErr := graft.WaitForDaemon(waitCtx, sockPath); waitErr != nil {
+			logsPath, _ := graft.DaemonLogsPathForCurrentHost(graft.ServerRoleLocal) //nolint:errcheck // best-effort for diagnostics
+
+			fmt.Fprintf(os.Stderr, "The daemon service was started but the daemon failed to respond.\n")
+			fmt.Fprintf(os.Stderr, "Check logs:    %s\n", filepath.Join(logsPath, "error.log"))
+			fmt.Fprintf(os.Stderr, "Check service: graft daemon service status\n")
+
+			return errors.New("daemon failed to start")
 		}
 
 		fmt.Fprintf(os.Stderr, "Daemon service started.\n")

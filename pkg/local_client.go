@@ -82,6 +82,27 @@ func connectAndCheck(
 	return clientConn, svcClient, resp.GetVersionInfo(), nil
 }
 
+// WaitForDaemon polls the daemon at the given socket path until a healthy connection can be
+// established or the context is cancelled.
+func WaitForDaemon(ctx context.Context, sockPath string) error {
+	const pollInterval = 250 * time.Millisecond
+
+	for {
+		conn, _, _, err := connectAndCheck(ctx, sockPath)
+		if err == nil {
+			conn.Close()
+
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(context.Cause(ctx))
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 // NewLocalClient returns a client connected to the local graft daemon. The returned context
 // should be used for all requests made to the daemon; it is the child of the given context.
 func NewLocalClient(

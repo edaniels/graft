@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package rsync;
+
+option go_package = "github.com/mutagen-io/mutagen/pkg/synchronization/rsync";
+
+import "synchronization/rsync/engine.proto";
+
+// Transmission represents a single message in a transmission stream. As a
+// Protocol Buffers message type, its internals are inherently public, but it
+// should otherwise be treated as an opaque type with a private implementation.
+message Transmission {
+    // ExpectedSize sets the expected size for the current incoming file. It is
+    // only set alongside the first operation in a file's transmission stream.
+    // If it zero, then the file's size should be treated as unknown, because a
+    // file of zero size will receive an immediate "done" transmission and would
+    // not be indicated as having zero size.
+    uint64 expectedSize = 1;
+    // Operation is the next operation in the transmission stream for the
+    // current file.
+    Operation operation = 2;
+    // Done indicates that the transmission stream for the current file is
+    // finished. If Done is true, then there will be no operation set, but there
+    // may be an error set.
+    bool done = 3;
+    // Error indicates that a non-terminal error has occurred. It can only be
+    // present if Done is true.
+    string error = 4;
+}

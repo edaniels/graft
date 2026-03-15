@@ -1,0 +1,89 @@
+version: "2"
+run:
+  modules-download-mode: readonly
+  tests: true
+linters:
+  default: all
+  disable:
+    - asasalint # poorly documented
+    - contextcheck # useful only sometimes but not often enough
+    - cyclop # cover in review
+    - exhaustruct # not helpful
+    - funcorder # not helpful
+    - funlen # cover in review
+    - gochecknoglobals # not practical
+    - gochecknoinits # not practical
+    - gocyclo # cover in review
+    - godox # not helpful
+    - interfacebloat # not practical
+    - ireturn # not helpful
+    - maintidx # cover in review
+    - mnd # not good
+    - nestif # I think it's buggy; gocognit is a little better
+    - noinlineerr # not helpful
+    - paralleltest # not helpful
+    - testpackage # not helpful
+    - varnamelen # cover in review
+    - wsl # replaced by wsl_5
+  settings:
+    custom:
+      println:
+        type: module
+      printf:
+        type: module
+      uselessf:
+        type: module
+      deferfor:
+        type: module
+      errresp:
+        type: module
+      mustcheck:
+        type: module
+      fatal:
+        type: module
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: "github.com/pkg/errors"
+              desc: use internal errors package
+    errcheck:
+      check-blank: true
+    gomoddirectives:
+      replace-local: true
+      replace-allow-list:
+        - github.com/mutagen-io/mutagen
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+    lll:
+      line-length: 140
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - gen$
+      - thirdparty$
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/edaniels/graft)
+  exclusions:
+    paths:
+      - gen$
+      - thirdparty$
+      - third_party$
+      - builtin$
+      - examples$

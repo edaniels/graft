@@ -167,7 +167,7 @@ func (m *LaunchdServiceManager) Status() (ServiceStatus, error) {
 
 	output, err := m.runCommand("launchctl", "list", launchdLabel)
 	if err != nil {
-		// Not loaded — just return what we have.
+		// Not loaded - just return what we have.
 		return st, nil //nolint:nilerr // launchctl error means "not loaded", not a failure
 	}
 

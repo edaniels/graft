@@ -81,7 +81,7 @@ See [docs/architecture.md](docs/architecture.md) for how graft works internally.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, including our [AI usage policy](CONTRIBUTING.md#ai-usage-policy). This project uses AI tools responsibly — all code is human-reviewed before merging, and all contributions must disclose AI usage.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, including our [AI usage policy](CONTRIBUTING.md#ai-usage-policy). This project uses AI tools responsibly - all code is human-reviewed before merging, and all contributions must disclose AI usage.
 
 ## Development
 

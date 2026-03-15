@@ -36,10 +36,11 @@ just protos         # Lint and generate protobuf code (outputs to gen/proto/)
 - `running_command.go` - Abstracts local/remote/docker command execution
 
 ### Code Style
+- **Formatting**: Never use emdashes. Use regular dashes instead.
 - **Errors**: Use the project's errors package over the stdlib package.
 - **Linting**: After every comittable unit of work completed, run `just lint`.
 - **Tests**: Every test must exercise **our code**, not stdlib or third-party behavior. If a function can't be called in a test (e.g. it depends on `os.Executable()`), refactor it to be testable.
-- **Tests**: Never use `time.Sleep` in tests — use channels to wait for conditions. Use `go.viam.com/test` for assertions, never `t.Fatal`/`t.Fatalf`/`t.Error` directly:
+- **Tests**: Never use `time.Sleep` in tests - use channels to wait for conditions. Use `go.viam.com/test` for assertions, never `t.Fatal`/`t.Fatalf`/`t.Error` directly:
   ```go
   import "go.viam.com/test"
 

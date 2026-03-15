@@ -20,19 +20,19 @@ All SSPL-licensed code and metadata has been removed:
 
 ### Linux File Watcher Replacement
 
-`pkg/filesystem/watching/watch_recursive_linux.go` — new file replacing the SSPL fanotify watcher. Uses `github.com/rjeczalik/notify` instead. Provides `LinuxRecursiveWatcher` with channel-based event delivery.
+`pkg/filesystem/watching/watch_recursive_linux.go` - new file replacing the SSPL fanotify watcher. Uses `github.com/rjeczalik/notify` instead. Provides `LinuxRecursiveWatcher` with channel-based event delivery.
 
 ### macOS fsevents Dependency Swap
 
-`pkg/filesystem/watching/watch_recursive_darwin_cgo.go` — import changed from `github.com/mutagen-io/fsevents` to `github.com/fsnotify/fsevents` (upstream's fork replaced with the community package). Corresponding license entry removed from `pkg/mutagen/licenses.go`.
+`pkg/filesystem/watching/watch_recursive_darwin_cgo.go` - import changed from `github.com/mutagen-io/fsevents` to `github.com/fsnotify/fsevents` (upstream's fork replaced with the community package). Corresponding license entry removed from `pkg/mutagen/licenses.go`.
 
 ### Logger slog Bridge
 
-`pkg/logging/logger.go` — added `NewLoggerOnSlogger()` constructor and modified `Sublogger`, `log`, and `logf` to route through Go's `log/slog` when a slogger is configured. Allows graft to capture mutagen log output via structured logging.
+`pkg/logging/logger.go` - added `NewLoggerOnSlogger()` constructor and modified `Sublogger`, `log`, and `logf` to route through Go's `log/slog` when a slogger is configured. Allows graft to capture mutagen log output via structured logging.
 
 ### Session Manager Without Persistence
 
-`pkg/synchronization/manager.go` — added `NewManagerWithoutPersistence()` which creates a Manager that skips loading sessions from disk. Graft manages session lifecycle externally.
+`pkg/synchronization/manager.go` - added `NewManagerWithoutPersistence()` which creates a Manager that skips loading sessions from disk. Graft manages session lifecycle externally.
 
 ### go.mod Stripped
 
@@ -48,7 +48,7 @@ Deleted `BUILDING.md`, `CONTRIBUTING.md`, `DCO`, `README.md`, `SECURITY.md`. `LI
 
 ## Pulling Upstream Updates
 
-Since this is a git subtree, our local changes are tracked in git history. When pulling upstream updates, git will merge them with our modifications — you only need to manually intervene if there are merge conflicts.
+Since this is a git subtree, our local changes are tracked in git history. When pulling upstream updates, git will merge them with our modifications - you only need to manually intervene if there are merge conflicts.
 
 ```bash
 # Add the upstream remote (one-time)
@@ -67,15 +67,15 @@ If the merge completes cleanly, verify things still work:
 
 1. **Run `go mod tidy`** from the repo root
 2. **Run `just lint`** and fix any issues
-3. **Build and test** — `just graft-dev` and run the test suite
+3. **Build and test** - `just graft-dev` and run the test suite
 
 ### Resolving Conflicts
 
 If there are merge conflicts, they'll most likely be in files we've modified. Watch for:
 
-- **SSPL code re-added** — upstream may add new SSPL files or re-add the `sspl/` directory. Delete them and remove any `mutagensspl` build tags.
-- **go.mod** — upstream will have full dependency lists; strip it back to just the module declaration and Go version.
-- **`pkg/logging/logger.go`** — if upstream modifies the logger, ensure `NewLoggerOnSlogger` and the slog routing in `log`/`logf`/`Sublogger` still apply.
-- **`pkg/synchronization/manager.go`** — ensure `NewManagerWithoutPersistence` still compiles against any changes to `Manager` fields.
-- **`pkg/filesystem/watching/`** — if upstream changes the watcher interfaces, our `watch_recursive_linux.go` and the fsevents import swap in `watch_recursive_darwin_cgo.go` may need updating.
-- **Docs** — upstream may re-add `BUILDING.md`, `CONTRIBUTING.md`, `DCO`, `README.md`, `SECURITY.md`. Delete them.
+- **SSPL code re-added** - upstream may add new SSPL files or re-add the `sspl/` directory. Delete them and remove any `mutagensspl` build tags.
+- **go.mod** - upstream will have full dependency lists; strip it back to just the module declaration and Go version.
+- **`pkg/logging/logger.go`** - if upstream modifies the logger, ensure `NewLoggerOnSlogger` and the slog routing in `log`/`logf`/`Sublogger` still apply.
+- **`pkg/synchronization/manager.go`** - ensure `NewManagerWithoutPersistence` still compiles against any changes to `Manager` fields.
+- **`pkg/filesystem/watching/`** - if upstream changes the watcher interfaces, our `watch_recursive_linux.go` and the fsevents import swap in `watch_recursive_darwin_cgo.go` may need updating.
+- **Docs** - upstream may re-add `BUILDING.md`, `CONTRIBUTING.md`, `DCO`, `README.md`, `SECURITY.md`. Delete them.

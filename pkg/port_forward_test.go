@@ -323,7 +323,7 @@ func TestForwardPortTCPHalfClose(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldBeNil)
 
-	// Close send side — propagates FIN to TCP server via CloseWrite.
+	// Close send side - propagates FIN to TCP server via CloseWrite.
 	err = stream.CloseSend()
 	test.That(t, err, test.ShouldBeNil)
 
@@ -423,7 +423,7 @@ func TestRelaySurvivesListenerCancel(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, string(buf), test.ShouldEqual, "hello")
 
-	// Cancel fwdCtx — simulates port leaving LISTEN state.
+	// Cancel fwdCtx - simulates port leaving LISTEN state.
 	fwdCancel()
 
 	// Poll until new connections are refused (listener closed).
@@ -440,7 +440,7 @@ func TestRelaySurvivesListenerCancel(t *testing.T) {
 		return false
 	}), test.ShouldBeNil)
 
-	// Existing connection should STILL work — relay on relayCtx survives.
+	// Existing connection should STILL work - relay on relayCtx survives.
 	_, err = client.Write([]byte("world"))
 	test.That(t, err, test.ShouldBeNil)
 
@@ -465,13 +465,13 @@ func TestParseHexIP(t *testing.T) {
 		{"00000000000000000000000001000000", "::1"},
 		// IPv6 all-zeros: ::
 		{"00000000000000000000000000000000", "::"},
-		// Non-trivial IPv6: 2001:db8::1 — exercises byte reversal in all four groups.
+		// Non-trivial IPv6: 2001:db8::1 - exercises byte reversal in all four groups.
 		// Group 0: 2001:0db8 -> bytes 20 01 0d b8 -> LE reversed B8 0D 01 20
 		// Group 1: 0000:0000 -> 00000000
 		// Group 2: 0000:0000 -> 00000000
 		// Group 3: 0000:0001 -> bytes 00 00 00 01 -> LE reversed 01 00 00 00
 		{"B80D0120000000000000000001000000", "2001:db8::1"},
-		// fe80::1 — link-local address.
+		// fe80::1 - link-local address.
 		// Group 0: fe80:0000 -> bytes fe 80 00 00 -> LE reversed 00 00 80 FE
 		// Group 1-2: zeros
 		// Group 3: 0000:0001 -> 01000000

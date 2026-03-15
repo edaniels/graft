@@ -60,10 +60,10 @@ graph TD
 
 The local daemon listens on a Unix socket at `~/.local/state/graft/local/graftd.sock`. It manages:
 
-- **Connections** — SSH and Docker connections to remote machines
-- **Sessions** — active shell sessions and their shimmed commands
-- **Synchronization** — bidirectional file sync via mutagen
-- **Port forwarding** — automatic forwarding of remote listening ports
+- **Connections** - SSH and Docker connections to remote machines
+- **Sessions** - active shell sessions and their shimmed commands
+- **Synchronization** - bidirectional file sync via mutagen
+- **Port forwarding** - automatic forwarding of remote listening ports
 
 Clients (the `graft` CLI) talk to the local daemon over this socket using gRPC.
 
@@ -91,8 +91,8 @@ graph LR
     raw --> remote
 ```
 
-1. **SSH Unix socket forwarding** (preferred) — the SSH client dials the remote socket directly via `streamlocal` channel
-2. **Stdio tunnel** (fallback) — runs `graft raw` over SSH/Docker exec, which dials the socket and pipes stdin/stdout. An `ACK` handshake confirms the connection before gRPC traffic begins.
+1. **SSH Unix socket forwarding** (preferred) - the SSH client dials the remote socket directly via `streamlocal` channel
+2. **Stdio tunnel** (fallback) - runs `graft raw` over SSH/Docker exec, which dials the socket and pipes stdin/stdout. An `ACK` handshake confirms the connection before gRPC traffic begins.
 
 In both cases the resulting `net.Conn` is wrapped into a `grpc.ClientConn` using a passthrough dialer.
 
@@ -168,8 +168,8 @@ A session represents an active shell where graft is activated. It is identified 
 3. Prepends the shim directory to `PATH`
 4. Saves the original PATH as `_GC_LOCAL_PATH`
 5. Installs shell hooks:
-   - **precmd/prompt** — reports the current working directory to the daemon and resolves which connection is active for the prompt
-   - **preexec** — extracts inline environment variable assignments for security
+  - **precmd/prompt** - reports the current working directory to the daemon and resolves which connection is active for the prompt
+  - **preexec** - extracts inline environment variable assignments for security
 
 ### CWD tracking
 
@@ -214,8 +214,8 @@ Since the shim directory is first in PATH, typing `python` runs the shim instead
 
 ### Forward vs prefix-forward
 
-- **forward** — the shim has the same name as the command (`python` -> `python`). Only one connection can forward a given command name.
-- **prefixForward** — the shim is prefixed with the connection name (`python` -> `dev-python`). Multiple connections can forward the same command without conflict.
+- **forward** - the shim has the same name as the command (`python` -> `python`). Only one connection can forward a given command name.
+- **prefixForward** - the shim is prefixed with the connection name (`python` -> `dev-python`). Multiple connections can forward the same command without conflict.
 
 ### Reconciliation
 

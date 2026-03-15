@@ -276,7 +276,7 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 	_, err = os.Stat(mgr.connectionRootsPath)
 	test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
 
-	// Run one tick — the file should be recreated.
+	// Run one tick - the file should be recreated.
 	mgr.tick(runCtx)
 
 	data, err := os.ReadFile(mgr.connectionRootsPath)

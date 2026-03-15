@@ -228,7 +228,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	remClient = graftv1.NewGraftServiceClient(conn1.daemon.RemoteClientConn())
 	remClient.Shutdown(t.Context(), &graftv1.ShutdownRequest{}) //nolint:errcheck
 
-	// Trigger reconnect — both connections share a daemon, so only one
+	// Trigger reconnect - both connections share a daemon, so only one
 	// reconnect attempt is needed. The daemon's reconnect guard prevents
 	// concurrent attempts, so the second call returns false immediately.
 	reconnectCtx := mgr.runCtx
@@ -279,7 +279,7 @@ func TestMultipleConnectionsDifferentIdentitiesE2E(t *testing.T) {
 	state1, _ := conn1.State()
 	test.That(t, state1, test.ShouldEqual, ConnectionStateConnected)
 
-	// Second connection with identity "bravo" — separate remote daemon instance.
+	// Second connection with identity "bravo" - separate remote daemon instance.
 	conn2, err := mgr.Initialize(t.Context(), connName2, destURL, t.TempDir(), "/tmp/proj2", "test-bravo-bb22")
 	test.That(t, err, test.ShouldBeNil)
 
@@ -882,7 +882,7 @@ func runCommandViaConnection(t *testing.T, conn *Connection, command string, arg
 	// Stdout must be drained concurrently with Wait, matching the production
 	// pattern in RunCommandGRPCServerHandler.Serve. The remote process()
 	// goroutine only closes the stdout pipe after sending the exit status on
-	// an unbuffered channel — which Wait reads. So ReadAll (waiting for pipe
+	// an unbuffered channel - which Wait reads. So ReadAll (waiting for pipe
 	// close) and Wait (unblocking the pipe close) must run concurrently.
 	var (
 		stdout    []byte

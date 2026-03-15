@@ -145,7 +145,7 @@ func parseSSHURLRemoteDir(dest string) (string, string) {
 		return "ssh://" + bareDest + ":" + possiblePort, after
 	}
 
-	// Not a port — the whole thing is a remote dir (e.g., "some:path").
+	// Not a port - the whole thing is a remote dir (e.g., "some:path").
 	return "ssh://" + bareDest, afterHost
 }
 

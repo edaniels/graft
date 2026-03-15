@@ -157,7 +157,7 @@ if ! gh release create "$TAG" \
     err "Failed to create release"
 fi
 
-# Release succeeded — disarm the cleanup trap.
+# Release succeeded - disarm the cleanup trap.
 trap - EXIT
 
 say "Release ${TAG} created successfully!"

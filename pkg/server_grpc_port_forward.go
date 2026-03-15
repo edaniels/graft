@@ -218,7 +218,7 @@ func relayBidi(stream graftv1.GraftService_ForwardPortServer, conn net.Conn) err
 	err1 := <-errCh
 	if err1 != nil {
 		// Error: close conn to unblock the Read goroutine promptly. This is not
-		// redundant with the deferred conn.Close() in ForwardPort—it ensures the
+		// redundant with the deferred conn.Close() in ForwardPort - it ensures the
 		// goroutine makes progress immediately rather than waiting for gRPC teardown.
 		// Returning causes ForwardPort to return, tearing down the stream and
 		// unblocking any goroutine stuck on stream.Recv.

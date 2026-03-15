@@ -140,7 +140,7 @@ func BuildVersionsEqual(infoA, infoB *graftv1.VersionInfo) string {
 		return ""
 	}
 
-	// One side has version/revision info the other lacks — can't confirm they match.
+	// One side has version/revision info the other lacks - can't confirm they match.
 	if infoA.Version != nil || infoB.Version != nil ||
 		infoA.VcsRevision != nil || infoB.VcsRevision != nil {
 		return "version info mismatch"

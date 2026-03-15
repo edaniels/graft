@@ -399,7 +399,7 @@ func TestRemoteDaemonInstallGuard(t *testing.T) {
 		// conn2 sees it
 		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeTrue)
 
-		// Daemon goes down — reset
+		// Daemon goes down - reset
 		conn1.daemon.resetInstallState()
 		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeFalse)
 	})

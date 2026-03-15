@@ -16,7 +16,7 @@ import (
 	"github.com/edaniels/graft/errors"
 )
 
-const launchdLabel = "com.graft.daemon"
+const launchdLabel = "run.graft.daemon"
 
 var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -116,12 +116,21 @@ func (m *LaunchdServiceManager) Install(binaryPath string) error {
 		return errors.Wrap(err)
 	}
 
+	// Best-effort unload before writing the new plist, in case a stale
+	// registration exists from a previous install.
+	m.runCommand("launchctl", "unload", plistPath) //nolint:errcheck
+
 	if err := os.WriteFile(plistPath, plist, FilePerms); err != nil {
 		return errors.Wrap(err)
 	}
 
-	if _, err := m.runCommand("launchctl", "load", plistPath); err != nil {
-		return errors.WrapPrefix(err, "launchctl load failed")
+	if err := m.launchctlLoad(plistPath); err != nil {
+		// Clean up: unload and remove the plist so we don't leave a
+		// half-installed service.
+		m.runCommand("launchctl", "unload", plistPath) //nolint:errcheck
+		os.Remove(plistPath)
+
+		return err
 	}
 
 	return nil
@@ -183,11 +192,7 @@ func (m *LaunchdServiceManager) Start() error {
 		return errors.Wrap(err)
 	}
 
-	if _, err := m.runCommand("launchctl", "load", plistPath); err != nil {
-		return errors.WrapPrefix(err, "launchctl load failed")
-	}
-
-	return nil
+	return m.launchctlLoad(plistPath)
 }
 
 func (m *LaunchdServiceManager) Stop() error {
@@ -203,6 +208,26 @@ func (m *LaunchdServiceManager) Stop() error {
 
 	if _, err := m.runCommand("launchctl", "unload", plistPath); err != nil {
 		return errors.WrapPrefix(err, "launchctl unload failed")
+	}
+
+	return nil
+}
+
+// launchctlLoad loads the plist using launchctl load -w. The -w flag is
+// required on modern macOS where the Background Task Management system can
+// mark services as disabled; without it, launchctl load silently fails
+// (exit code 0 but prints "Load failed") when a service was previously
+// registered.
+func (m *LaunchdServiceManager) launchctlLoad(plistPath string) error {
+	output, err := m.runCommand("launchctl", "load", "-w", plistPath)
+	if err != nil {
+		return errors.WrapPrefix(err, "launchctl load failed")
+	}
+
+	// launchctl load can return exit code 0 even when loading fails,
+	// printing "Load failed: ..." to stdout instead.
+	if bytes.Contains(output, []byte("Load failed")) {
+		return errors.Errorf("launchctl load failed: %s", strings.TrimSpace(string(output)))
 	}
 
 	return nil

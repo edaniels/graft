@@ -119,6 +119,34 @@ func TestResolveProjectConnectParams(t *testing.T) {
 	})
 }
 
+func TestParseConnectArgs(t *testing.T) {
+	t.Run("no args returns empty strings and no error", func(t *testing.T) {
+		localDir, destination, err := parseConnectArgs(nil)
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, localDir, test.ShouldBeEmpty)
+		test.That(t, destination, test.ShouldBeEmpty)
+	})
+
+	t.Run("one arg is rejected", func(t *testing.T) {
+		_, _, err := parseConnectArgs([]string{"user@host"})
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "local_dir and destination required")
+	})
+
+	t.Run("two args returns local dir and destination", func(t *testing.T) {
+		localDir, destination, err := parseConnectArgs([]string{".", "user@host:~/proj"})
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, localDir, test.ShouldEqual, ".")
+		test.That(t, destination, test.ShouldEqual, "user@host:~/proj")
+	})
+
+	t.Run("three or more args is rejected", func(t *testing.T) {
+		_, _, err := parseConnectArgs([]string{".", "user@host", "extra"})
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "local_dir and destination required")
+	})
+}
+
 func TestParseSSHURLRemoteDir(t *testing.T) {
 	tests := []struct {
 		name       string

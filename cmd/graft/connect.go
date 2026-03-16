@@ -22,12 +22,11 @@ var (
 )
 
 var connectCmd = &cobra.Command{
-	Use:   "connect [flags] [local_dir] <destination>[:<remote_dir>]",
+	Use:   "connect [flags] <local_dir> <destination>[:<remote_dir>]",
 	Short: "Connect to a remote machine or container",
 	Long: `Connect to a remote machine or container.
 
 Arguments:
-  1 arg:  destination only (no local root set)
   2 args: local_dir destination[:remote_dir]
 
 Destination formats:
@@ -37,21 +36,16 @@ Destination formats:
 
 Use --sync with local_dir and remote_dir to enable file synchronization.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
+		localDir, destination, err := parseConnectArgs(args)
+		if err != nil {
+			return err
+		}
+
+		if destination == "" {
 			return connectFromProject(cmd)
 		}
 
-		var localDir, destination, remoteDir string
-
-		switch len(args) {
-		case 1:
-			destination = args[0]
-		case 2:
-			localDir = args[0]
-			destination = args[1]
-		default:
-			return cliExit("expected 1 or 2 arguments", 1)
-		}
+		var remoteDir string
 
 		// Parse remote_dir from destination (SCP-style colon syntax).
 		// Only for non-docker destinations.
@@ -184,6 +178,17 @@ func parseDestinationRemoteDir(dest string) (string, string) {
 	}
 
 	return dest, ""
+}
+
+func parseConnectArgs(args []string) (string, string, error) {
+	switch len(args) {
+	case 0:
+		return "", "", nil
+	case 2:
+		return args[0], args[1], nil
+	default:
+		return "", "", cliExit("local_dir and destination required", 1)
+	}
 }
 
 func connectFromProject(cmd *cobra.Command) error {

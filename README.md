@@ -93,12 +93,23 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, including our [AI usage p
 
 ## Nix Install
 
-```nix
-# In your flake inputs:
-graft.url = "github:edaniels/graft";
+Graft can also be installed via [nix flakes](https://wiki.nixos.org/wiki/Flakes):
 
-# In your packages:
-graft.packages.${system}.default
+```nix
+# In your flake inputs add graft:
+inputs = {
+    # ...
+    graft.url = "github:edaniels/graft";
+    # ...
+}
+
+# In your configuration add graft to your systemPackages:
+# ${system} should be defined as your current platform. Ex: "x86_64-linux" or "aarch64-darwin".
+environment.systemPackages = [
+    # ...
+    graft.packages.${system}.default
+    # ...
+]
 ```
 
 ## Development

@@ -1,0 +1,39 @@
+# https://docs.determinate.systems/guides/automatically-fix-hashes-in-github-actions/
+name: Nix Flake Update
+
+on:
+  push:
+    branches: [zp/flake-test]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Build
+        id: build
+        run: nix build
+        continue-on-error: true
+
+      - name: Fix hashes
+        if: steps.build.outcome == 'failure' && github.event_name == 'push'
+        run: |
+          determinate-nixd fix hashes --auto-apply
+
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add flake.nix
+            git commit -m "nix: update vendorHash"
+            git push
+          fi
+
+      - name: Verify build
+        if: steps.build.outcome == 'failure'
+        run: nix build

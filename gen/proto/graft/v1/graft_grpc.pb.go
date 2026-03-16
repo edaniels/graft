@@ -31,6 +31,7 @@ const (
 	GraftService_DiscoverCommands_FullMethodName                = "/graft.v1.GraftService/DiscoverCommands"
 	GraftService_UpdateConnectionRoots_FullMethodName           = "/graft.v1.GraftService/UpdateConnectionRoots"
 	GraftService_UpdateConnectionForwardCommands_FullMethodName = "/graft.v1.GraftService/UpdateConnectionForwardCommands"
+	GraftService_RemoveConnectionForwardCommands_FullMethodName = "/graft.v1.GraftService/RemoveConnectionForwardCommands"
 	GraftService_SyncFilesToConnection_FullMethodName           = "/graft.v1.GraftService/SyncFilesToConnection"
 	GraftService_DumpLogs_FullMethodName                        = "/graft.v1.GraftService/DumpLogs"
 	GraftService_SyncFilesToConnectionProtocol_FullMethodName   = "/graft.v1.GraftService/SyncFilesToConnectionProtocol"
@@ -96,6 +97,8 @@ type GraftServiceClient interface {
 	//
 	// TODO(erd): should this be replace or insert?
 	UpdateConnectionForwardCommands(ctx context.Context, in *UpdateConnectionForwardCommandsRequest, opts ...grpc.CallOption) (*UpdateConnectionForwardCommandsResponse, error)
+	// RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
+	RemoveConnectionForwardCommands(ctx context.Context, in *RemoveConnectionForwardCommandsRequest, opts ...grpc.CallOption) (*RemoveConnectionForwardCommandsResponse, error)
 	// SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
 	SyncFilesToConnection(ctx context.Context, in *SyncFilesToConnectionRequest, opts ...grpc.CallOption) (*SyncFilesToConnectionResponse, error)
 	// DumpLogs dumps all found daemon logs as raw text.
@@ -272,6 +275,16 @@ func (c *graftServiceClient) UpdateConnectionForwardCommands(ctx context.Context
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdateConnectionForwardCommandsResponse)
 	err := c.cc.Invoke(ctx, GraftService_UpdateConnectionForwardCommands_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) RemoveConnectionForwardCommands(ctx context.Context, in *RemoveConnectionForwardCommandsRequest, opts ...grpc.CallOption) (*RemoveConnectionForwardCommandsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveConnectionForwardCommandsResponse)
+	err := c.cc.Invoke(ctx, GraftService_RemoveConnectionForwardCommands_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +474,8 @@ type GraftServiceServer interface {
 	//
 	// TODO(erd): should this be replace or insert?
 	UpdateConnectionForwardCommands(context.Context, *UpdateConnectionForwardCommandsRequest) (*UpdateConnectionForwardCommandsResponse, error)
+	// RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
+	RemoveConnectionForwardCommands(context.Context, *RemoveConnectionForwardCommandsRequest) (*RemoveConnectionForwardCommandsResponse, error)
 	// SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
 	SyncFilesToConnection(context.Context, *SyncFilesToConnectionRequest) (*SyncFilesToConnectionResponse, error)
 	// DumpLogs dumps all found daemon logs as raw text.
@@ -540,6 +555,9 @@ func (UnimplementedGraftServiceServer) UpdateConnectionRoots(context.Context, *U
 }
 func (UnimplementedGraftServiceServer) UpdateConnectionForwardCommands(context.Context, *UpdateConnectionForwardCommandsRequest) (*UpdateConnectionForwardCommandsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateConnectionForwardCommands not implemented")
+}
+func (UnimplementedGraftServiceServer) RemoveConnectionForwardCommands(context.Context, *RemoveConnectionForwardCommandsRequest) (*RemoveConnectionForwardCommandsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveConnectionForwardCommands not implemented")
 }
 func (UnimplementedGraftServiceServer) SyncFilesToConnection(context.Context, *SyncFilesToConnectionRequest) (*SyncFilesToConnectionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SyncFilesToConnection not implemented")
@@ -797,6 +815,24 @@ func _GraftService_UpdateConnectionForwardCommands_Handler(srv interface{}, ctx 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GraftService_RemoveConnectionForwardCommands_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveConnectionForwardCommandsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).RemoveConnectionForwardCommands(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_RemoveConnectionForwardCommands_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).RemoveConnectionForwardCommands(ctx, req.(*RemoveConnectionForwardCommandsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _GraftService_SyncFilesToConnection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SyncFilesToConnectionRequest)
 	if err := dec(in); err != nil {
@@ -990,6 +1026,10 @@ var GraftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateConnectionForwardCommands",
 			Handler:    _GraftService_UpdateConnectionForwardCommands_Handler,
+		},
+		{
+			MethodName: "RemoveConnectionForwardCommands",
+			Handler:    _GraftService_RemoveConnectionForwardCommands_Handler,
 		},
 		{
 			MethodName: "SyncFilesToConnection",

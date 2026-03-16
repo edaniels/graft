@@ -268,6 +268,23 @@ func (conn *Connection) UpdateForwardCommands(commands []ForwardCommandIntent) {
 	conn.fwdList = append(conn.fwdList, commands...)
 }
 
+// RemoveForwardCommands removes the named commands from the forward list.
+func (conn *Connection) RemoveForwardCommands(commands []string) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	toRemove := make(map[string]struct{}, len(commands))
+	for _, cmd := range commands {
+		toRemove[cmd] = struct{}{}
+	}
+
+	conn.fwdList = slices.DeleteFunc(conn.fwdList, func(intent ForwardCommandIntent) bool {
+		_, remove := toRemove[intent.Name]
+
+		return remove
+	})
+}
+
 func (conn *Connection) Name() string {
 	return conn.name
 }

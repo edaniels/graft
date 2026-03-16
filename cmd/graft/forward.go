@@ -42,6 +42,30 @@ var forwardListCmd = &cobra.Command{
 	},
 }
 
+var forwardRemoveTo string
+
+var forwardRemoveCmd = &cobra.Command{
+	Use:   "remove [flags] <command> [commands...]",
+	Short: "Remove forwarded commands from a connection",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), true)
+		defer client.Close()
+
+		toConn := forwardRemoveTo
+		if toConn == "" {
+			selectResp, err := client.SelectConnectionForCWD(ctx)
+			if err != nil {
+				return cliExit("--to required (no connection detected for current directory)", 1)
+			}
+
+			toConn = selectResp.GetConnectionName()
+		}
+
+		return client.RemoveForwardCommands(ctx, args, toConn)
+	},
+}
+
 var forwardWhichCmd = &cobra.Command{
 	Use:   "which <command>",
 	Short: "Show which connection a forwarded command uses",
@@ -58,7 +82,10 @@ func init() {
 	forwardCmd.Flags().StringVarP(&forwardTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
 	forwardCmd.Flags().BoolVar(&forwardPrefix, "prefix", false, "Forward with connection name prefix")
 
+	forwardRemoveCmd.Flags().StringVarP(&forwardRemoveTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
+
 	forwardCmd.AddCommand(forwardListCmd)
+	forwardCmd.AddCommand(forwardRemoveCmd)
 	forwardCmd.AddCommand(forwardWhichCmd)
 
 	rootCmd.AddCommand(forwardCmd)

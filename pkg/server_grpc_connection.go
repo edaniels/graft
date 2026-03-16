@@ -504,6 +504,23 @@ func (srv *Server) UpdateConnectionForwardCommands(
 	return &graftv1.UpdateConnectionForwardCommandsResponse{}, nil
 }
 
+// RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
+func (srv *Server) RemoveConnectionForwardCommands(
+	_ context.Context,
+	req *graftv1.RemoveConnectionForwardCommandsRequest,
+) (*graftv1.RemoveConnectionForwardCommandsResponse, error) {
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := srv.RemoveForwardCommands(req.GetCommands(), conn.Name()); err != nil {
+		return nil, err
+	}
+
+	return &graftv1.RemoveConnectionForwardCommandsResponse{}, nil
+}
+
 // SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
 func (srv *Server) SyncFilesToConnection(
 	ctx context.Context,

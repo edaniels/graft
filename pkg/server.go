@@ -344,6 +344,49 @@ func (srv *Server) UpdateForwardCommands(commands []ForwardCommandIntent, toDest
 	return nil
 }
 
+// RemoveForwardCommands removes the specified commands from the connection associated with the
+// destination label and then persists the config.
+func (srv *Server) RemoveForwardCommands(commands []string, fromDestination string) error {
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	conn, err := srv.connMgr.Connection(fromDestination)
+	if err != nil {
+		return err
+	}
+
+	if err := srv.connMgr.RemoveForwardCommands(conn.Name(), commands); err != nil {
+		return err
+	}
+
+	toRemove := make(map[string]struct{}, len(commands))
+	for _, cmd := range commands {
+		toRemove[cmd] = struct{}{}
+	}
+
+	for idx, connConfig := range srv.rootConfig.Connections {
+		if connConfig.Name == conn.Name() {
+			connConfig.Forward = slices.DeleteFunc(connConfig.Forward, func(name string) bool {
+				_, remove := toRemove[name]
+
+				return remove
+			})
+			connConfig.PrefixForward = slices.DeleteFunc(connConfig.PrefixForward, func(name string) bool {
+				_, remove := toRemove[name]
+
+				return remove
+			})
+			srv.rootConfig.Connections[idx] = connConfig
+
+			break
+		}
+	}
+
+	srv.persistConfig()
+
+	return nil
+}
+
 // UpdateSynchronizations updates the connection associated with the destination label with the latest
 // synchronization info.
 //

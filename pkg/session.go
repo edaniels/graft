@@ -97,6 +97,5 @@ func (sess *Session) UpdateDesiredForwardCommands(toDestination string, commands
 	sess.sessMu.Lock()
 	defer sess.sessMu.Unlock()
 
-	// TODO(erd): Implement removal of desired forward commands.
 	sess.desiredFwds[toDestination] = append(sess.desiredFwds[toDestination], commands...)
 }

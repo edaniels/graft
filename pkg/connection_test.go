@@ -130,6 +130,74 @@ func TestSetRoots(t *testing.T) {
 	})
 }
 
+func TestRemoveForwardCommands(t *testing.T) {
+	t.Run("removes matching commands", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+		conn.UpdateForwardCommands([]ForwardCommandIntent{
+			{Name: "go", Prefix: false},
+			{Name: "python", Prefix: false},
+			{Name: "node", Prefix: false},
+		})
+
+		conn.RemoveForwardCommands([]string{"python"})
+
+		intents := conn.ForwardIntents()
+		test.That(t, len(intents), test.ShouldEqual, 2)
+		test.That(t, intents[0].Name, test.ShouldEqual, "go")
+		test.That(t, intents[1].Name, test.ShouldEqual, "node")
+	})
+
+	t.Run("removes multiple commands at once", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+		conn.UpdateForwardCommands([]ForwardCommandIntent{
+			{Name: "go", Prefix: false},
+			{Name: "python", Prefix: false},
+			{Name: "node", Prefix: false},
+		})
+
+		conn.RemoveForwardCommands([]string{"go", "node"})
+
+		intents := conn.ForwardIntents()
+		test.That(t, len(intents), test.ShouldEqual, 1)
+		test.That(t, intents[0].Name, test.ShouldEqual, "python")
+	})
+
+	t.Run("removing nonexistent command is a no-op", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+		conn.UpdateForwardCommands([]ForwardCommandIntent{
+			{Name: "go", Prefix: false},
+		})
+
+		conn.RemoveForwardCommands([]string{"nonexistent"})
+
+		intents := conn.ForwardIntents()
+		test.That(t, len(intents), test.ShouldEqual, 1)
+		test.That(t, intents[0].Name, test.ShouldEqual, "go")
+	})
+
+	t.Run("removing from empty list is a no-op", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+
+		conn.RemoveForwardCommands([]string{"go"})
+
+		intents := conn.ForwardIntents()
+		test.That(t, intents, test.ShouldBeEmpty)
+	})
+
+	t.Run("removes only exact name matches preserving prefix variants", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+		conn.UpdateForwardCommands([]ForwardCommandIntent{
+			{Name: "python", Prefix: false},
+			{Name: "python", Prefix: true},
+		})
+
+		conn.RemoveForwardCommands([]string{"python"})
+
+		intents := conn.ForwardIntents()
+		test.That(t, intents, test.ShouldBeEmpty)
+	})
+}
+
 func TestDaemonKey(t *testing.T) {
 	tests := []struct {
 		name     string

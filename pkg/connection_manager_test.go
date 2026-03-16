@@ -136,6 +136,38 @@ func TestConnectionManagerFailedInitRestoreLeavesConnection(t *testing.T) {
 	test.That(t, state, test.ShouldEqual, ConnectionStateFailed)
 }
 
+func TestConnectionManagerRemoveForwardCommands(t *testing.T) {
+	t.Run("removes commands from an existing connection", func(t *testing.T) {
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+		daemon.setState(ConnectionStateConnected)
+		conn := mgr.createConnection("test-conn", "/local", "/remote", daemon)
+		conn.UpdateForwardCommands([]ForwardCommandIntent{
+			{Name: "go", Prefix: false},
+			{Name: "python", Prefix: false},
+		})
+
+		err := mgr.RemoveForwardCommands("test-conn", []string{"go"})
+		test.That(t, err, test.ShouldBeNil)
+
+		intents := conn.ForwardIntents()
+		test.That(t, len(intents), test.ShouldEqual, 1)
+		test.That(t, intents[0].Name, test.ShouldEqual, "python")
+	})
+
+	t.Run("returns error for unknown connection", func(t *testing.T) {
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		err := mgr.RemoveForwardCommands("nonexistent", []string{"go"})
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, errors.Is(err, errConnectionNotFound), test.ShouldBeTrue)
+	})
+}
+
 // fakeConnectorFactory implements ConnectorFactory for testing.
 type fakeConnectorFactory struct {
 	connector RemoteConnector

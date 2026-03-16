@@ -74,6 +74,9 @@ service GraftService {
   // TODO(erd): should this be replace or insert?
   rpc UpdateConnectionForwardCommands(UpdateConnectionForwardCommandsRequest) returns (UpdateConnectionForwardCommandsResponse) {}
 
+  // RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
+  rpc RemoveConnectionForwardCommands(RemoveConnectionForwardCommandsRequest) returns (RemoveConnectionForwardCommandsResponse) {}
+
   // SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
   rpc SyncFilesToConnection(SyncFilesToConnectionRequest) returns (SyncFilesToConnectionResponse) {}
 
@@ -318,6 +321,13 @@ message UpdateConnectionForwardCommandsRequest {
 }
 
 message UpdateConnectionForwardCommandsResponse {}
+
+message RemoveConnectionForwardCommandsRequest {
+  string connection_name = 1;
+  repeated string commands = 2;
+}
+
+message RemoveConnectionForwardCommandsResponse {}
 
 message SyncFilesToConnectionRequest {
   string source_dir = 1;

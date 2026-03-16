@@ -364,6 +364,18 @@ func (mgr *ConnectionManager) UpdateForwardCommands(name string, commands []Forw
 	return nil
 }
 
+// RemoveForwardCommands removes the named commands from the given connection's forward list.
+func (mgr *ConnectionManager) RemoveForwardCommands(name string, commands []string) error {
+	conn, err := mgr.Connection(name)
+	if err != nil {
+		return err
+	}
+
+	conn.RemoveForwardCommands(commands)
+
+	return nil
+}
+
 // Close ends our sessions with any existing connection and closes daemons.
 func (mgr *ConnectionManager) Close() {
 	mgr.connMgrMu.Lock()

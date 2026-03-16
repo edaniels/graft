@@ -710,6 +710,18 @@ func (client *LocalClient) ForwardCommands(ctx context.Context, commands []strin
 	return nil
 }
 
+// RemoveForwardCommands removes the specified commands from being forwarded for a connection.
+func (client *LocalClient) RemoveForwardCommands(ctx context.Context, commands []string, connectionName string) error {
+	if _, err := client.RemoveConnectionForwardCommands(ctx, &graftv1.RemoveConnectionForwardCommandsRequest{
+		ConnectionName: connectionName,
+		Commands:       commands,
+	}); err != nil {
+		return client.handleError(err)
+	}
+
+	return nil
+}
+
 // Which prints which connection a command is mapped to.
 func (client *LocalClient) Which(ctx context.Context, cmd string) error {
 	resp, err := client.SessionWhich(ctx, &graftv1.SessionWhichRequest{

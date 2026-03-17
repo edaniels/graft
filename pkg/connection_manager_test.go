@@ -23,7 +23,8 @@ func TestConnectionManagerConnectionsSnapshot(t *testing.T) {
 	// Add a connection directly to the map (simulating createConnection).
 	daemon := newRemoteDaemon(&noopConnector{})
 	daemon.runCtx = mgr.runCtx
-	conn := mgr.createConnection("test-conn", "/local", "/remote", daemon)
+	conn, err := mgr.createConnection("test-conn", "/local", "/remote", daemon, false)
+	test.That(t, err, test.ShouldBeNil)
 
 	// Connections() returns the connection.
 	conns = mgr.Connections()
@@ -66,7 +67,7 @@ func TestConnectionManagerConnectionVisibleDuringInit(t *testing.T) {
 	initDone := make(chan error, 1)
 
 	go func() {
-		_, err := mgr.Restore(t.Context(), "myconn", destURL, "/local", "/remote", "")
+		_, err := mgr.Restore(t.Context(), "myconn", destURL, "/local", "/remote", "", false)
 		initDone <- err
 	}()
 
@@ -102,7 +103,7 @@ func TestConnectionManagerFailedInitDestroyIfFailRemovesConnection(t *testing.T)
 	test.That(t, err, test.ShouldBeNil)
 
 	// Initialize (destroyIfFail=true) should fail and remove connection from map.
-	_, initErr := mgr.Initialize(t.Context(), "myconn", destURL, "/local", "/remote", "")
+	_, initErr := mgr.Initialize(t.Context(), "myconn", destURL, "/local", "/remote", "", false)
 	test.That(t, initErr, test.ShouldNotBeNil)
 
 	conns := mgr.Connections()
@@ -125,7 +126,7 @@ func TestConnectionManagerFailedInitRestoreLeavesConnection(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	// Restore (destroyIfFail=false) should fail but leave connection in map.
-	_, restoreErr := mgr.Restore(t.Context(), "myconn", destURL, "/local", "/remote", "")
+	_, restoreErr := mgr.Restore(t.Context(), "myconn", destURL, "/local", "/remote", "", false)
 	test.That(t, restoreErr, test.ShouldNotBeNil)
 
 	conns := mgr.Connections()
@@ -144,7 +145,8 @@ func TestConnectionManagerRemoveForwardCommands(t *testing.T) {
 		daemon := newRemoteDaemon(&noopConnector{})
 		daemon.runCtx = mgr.runCtx
 		daemon.setState(ConnectionStateConnected)
-		conn := mgr.createConnection("test-conn", "/local", "/remote", daemon)
+		conn, createErr := mgr.createConnection("test-conn", "/local", "/remote", daemon, false)
+		test.That(t, createErr, test.ShouldBeNil)
 		conn.UpdateForwardCommands([]ForwardCommandIntent{
 			{Name: "go", Prefix: false},
 			{Name: "python", Prefix: false},
@@ -293,7 +295,7 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 
 	daemon := newRemoteDaemon(&noopConnector{})
 	daemon.runCtx = runCtx
-	mgr.connections["dev"] = newConnection(daemon, "dev", "/home/user/project", "/remote")
+	mgr.connections["dev"] = newConnection(daemon, "dev", "/home/user/project", "/remote", false)
 
 	// Write the file initially.
 	mgr.connMgrMu.Lock()
@@ -314,4 +316,193 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 	data, err := os.ReadFile(mgr.connectionRootsPath)
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, string(data), test.ShouldEqual, "/home/user/project\tdev\n")
+}
+
+func TestConnectionByCWDSkipsBackground(t *testing.T) {
+	localRoot := t.TempDir()
+	subDir := filepath.Join(localRoot, "src")
+	test.That(t, os.MkdirAll(subDir, DirPerms), test.ShouldBeNil)
+
+	mgr := &ConnectionManager{
+		connections: map[string]*Connection{},
+	}
+	mgr.connections["bg"] = &Connection{name: "bg", localRoot: localRoot, background: true}
+
+	_, ok := mgr.connectionByCWD(context.Background(), subDir)
+	test.That(t, ok, test.ShouldBeFalse)
+}
+
+func TestConnectionByCWDBackgroundStillExplicitlyUsable(t *testing.T) {
+	mgr := NewConnectionManager()
+	defer mgr.Close()
+
+	daemon := newRemoteDaemon(&noopConnector{})
+	daemon.runCtx = mgr.runCtx
+	daemon.setState(ConnectionStateConnected)
+	_, createErr := mgr.createConnection("bg-conn", "/local", "/remote", daemon, true)
+	test.That(t, createErr, test.ShouldBeNil)
+
+	conn, err := mgr.Connection("bg-conn")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, conn.Name(), test.ShouldEqual, "bg-conn")
+	test.That(t, conn.Background(), test.ShouldBeTrue)
+}
+
+func TestWriteConnectionRootsFileExcludesBackground(t *testing.T) {
+	rootDir := t.TempDir()
+	mgr := &ConnectionManager{
+		connections:         map[string]*Connection{},
+		connectionRootsPath: filepath.Join(rootDir, connectionRootsFileName),
+	}
+
+	mgr.connections["fg"] = &Connection{name: "fg", localRoot: "/home/user/project"}
+	mgr.connections["bg"] = &Connection{name: "bg", localRoot: "/home/user/monorepo", background: true}
+	mgr.writeConnectionRootsFile()
+
+	data, err := os.ReadFile(mgr.connectionRootsPath)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, string(data), test.ShouldEqual, "/home/user/project\tfg\n")
+}
+
+func TestConnectionByCWD(t *testing.T) {
+	t.Run("single connection matches", func(t *testing.T) {
+		localRoot := t.TempDir()
+		subDir := filepath.Join(localRoot, "src")
+		test.That(t, os.MkdirAll(subDir, DirPerms), test.ShouldBeNil)
+
+		mgr := &ConnectionManager{
+			connections: map[string]*Connection{},
+		}
+		mgr.connections["dev"] = &Connection{name: "dev", localRoot: localRoot}
+
+		conn, ok := mgr.connectionByCWD(context.Background(), subDir)
+		test.That(t, ok, test.ShouldBeTrue)
+		test.That(t, conn.Name(), test.ShouldEqual, "dev")
+	})
+
+	t.Run("multiple matches returns false", func(t *testing.T) {
+		wsRoot := t.TempDir()
+		projRoot := filepath.Join(wsRoot, "infra", "anvil")
+		projSubDir := filepath.Join(projRoot, "src")
+		test.That(t, os.MkdirAll(projSubDir, DirPerms), test.ShouldBeNil)
+
+		mgr := &ConnectionManager{
+			connections: map[string]*Connection{},
+		}
+		mgr.connections["workspace"] = &Connection{name: "workspace", localRoot: wsRoot}
+		mgr.connections["anvil"] = &Connection{name: "anvil", localRoot: projRoot}
+
+		// Both connections match projSubDir - should refuse to auto-select.
+		_, ok := mgr.connectionByCWD(context.Background(), projSubDir)
+		test.That(t, ok, test.ShouldBeFalse)
+	})
+
+	t.Run("no match when cwd is outside all roots", func(t *testing.T) {
+		localRoot := t.TempDir()
+		otherDir := t.TempDir()
+
+		mgr := &ConnectionManager{
+			connections: map[string]*Connection{},
+		}
+		mgr.connections["dev"] = &Connection{name: "dev", localRoot: localRoot}
+
+		_, ok := mgr.connectionByCWD(context.Background(), otherDir)
+		test.That(t, ok, test.ShouldBeFalse)
+	})
+
+	t.Run("empty cwd returns no match", func(t *testing.T) {
+		mgr := &ConnectionManager{
+			connections: map[string]*Connection{},
+		}
+		mgr.connections["dev"] = &Connection{name: "dev", localRoot: "/some/path"}
+
+		_, ok := mgr.connectionByCWD(context.Background(), "")
+		test.That(t, ok, test.ShouldBeFalse)
+	})
+}
+
+func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
+	t.Run("new root is parent of existing", func(t *testing.T) {
+		parentRoot := t.TempDir()
+		childRoot := filepath.Join(parentRoot, "child")
+		test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
+
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+		_, err := mgr.createConnection("child-conn", childRoot, "/remote", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		_, err = mgr.createConnection("parent-conn", parentRoot, "/remote2", daemon, false)
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "overlaps")
+	})
+
+	t.Run("new root is child of existing", func(t *testing.T) {
+		parentRoot := t.TempDir()
+		childRoot := filepath.Join(parentRoot, "child")
+		test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
+
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+		_, err := mgr.createConnection("parent-conn", parentRoot, "/remote", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		_, err = mgr.createConnection("child-conn", childRoot, "/remote2", daemon, false)
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "overlaps")
+	})
+
+	t.Run("background connections do not conflict", func(t *testing.T) {
+		parentRoot := t.TempDir()
+		childRoot := filepath.Join(parentRoot, "child")
+		test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
+
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+		_, err := mgr.createConnection("fg-conn", childRoot, "/remote", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		_, err = mgr.createConnection("bg-conn", parentRoot, "/remote2", daemon, true)
+		test.That(t, err, test.ShouldBeNil)
+	})
+
+	t.Run("non-overlapping roots are fine", func(t *testing.T) {
+		rootA := t.TempDir()
+		rootB := t.TempDir()
+
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+		_, err := mgr.createConnection("connA", rootA, "/remote", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		_, err = mgr.createConnection("connB", rootB, "/remote2", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+	})
+
+	t.Run("empty root never conflicts", func(t *testing.T) {
+		root := t.TempDir()
+
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+		_, err := mgr.createConnection("connA", root, "/remote", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		_, err = mgr.createConnection("connB", "", "/remote2", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+	})
 }

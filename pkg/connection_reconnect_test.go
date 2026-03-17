@@ -138,6 +138,7 @@ func (m *mockReconnectConnector) Close() error {
 	return nil
 }
 
+// TODO(erd): unify with newRemoteDaemon so tests exercise real construction.
 func newTestDaemon(t *testing.T, connector *mockReconnectConnector) *remoteDaemon {
 	t.Helper()
 
@@ -303,7 +304,7 @@ func TestConnectionStateDerivedFromDaemon(t *testing.T) {
 	connector := &mockReconnectConnector{destination: "test://host"}
 	daemon := newTestDaemon(t, connector)
 
-	conn := newConnection(daemon, "myconn", "/local", "/remote")
+	conn := newConnection(daemon, "myconn", "/local", "/remote", false)
 
 	// Connection derives Connected from daemon.
 	state, _ := conn.State()

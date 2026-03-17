@@ -15,6 +15,7 @@ import (
 	"go.viam.com/test"
 )
 
+// TODO(erd): unify with production GitHubReleaseClient constructor so tests exercise real construction.
 func newTestGitHubReleaseClient(t *testing.T) (*GitHubReleaseClient, *http.ServeMux) {
 	t.Helper()
 

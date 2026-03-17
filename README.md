@@ -86,7 +86,7 @@ graft sync                     # sync files to the remote
 graft forward go make          # forward commands to the remote
 ```
 
-All of these commands detect the connection from your current directory. You can also specify a connection explicitly with `--to <connection>`.
+All of these commands detect the connection from your current directory. You can also specify a connection explicitly with `--to <connection>`, or pin a connection to your shell session with `graft use <connection>`.
 
 ## Commands
 
@@ -98,9 +98,81 @@ All of these commands detect the connection from your current directory. You can
 | `shell`      | Open a remote shell                                                  |
 | `sync`       | Sync files to the remote                                             |
 | `forward`    | Forward local commands to the remote                                 |
+| `use`        | Pin a connection to the current shell session                        |
 | `status`     | Show connection status                                               |
 | `doctor`     | Check environment setup and diagnose issues                          |
 | `init`       | Generate a graft.yaml configuration file for future `graft connect`s |
+
+## Connection selection
+
+When you run a command like `graft run` or `graft shell`, graft needs to know which connection to use. It follows this hierarchy:
+
+1. **Explicit** - `--to <connection>` on the command line
+2. **Session pin** - set with `graft use <connection>`, applies to the current shell
+3. **CWD-based** - automatically detected from your working directory based on each connection's local root
+
+`graft use` is useful when you have multiple connections and want to lock your shell to a specific one:
+
+```bash
+graft use labos          # pin this shell to the "labos" connection
+graft shell              # opens a shell on labos, regardless of cwd
+graft use --clear        # resume CWD-based auto-selection
+```
+
+## Projects and workspaces
+
+Instead of passing flags to `graft connect` every time, you can save connection settings in a `graft.yaml` file.
+
+### Project config
+
+A project config lives in a project directory and defines how to connect:
+
+```bash
+graft init . ubuntu@myhost:~/mydir --name myconn --sync --forward make
+```
+
+This creates a `graft.yaml`:
+
+```yaml
+version: v1
+forward:
+  - make
+destinations:
+  myconn:
+    host: myhost
+    user: ubuntu
+    syncTo: ~/mydir
+    sync: true
+```
+
+Then `graft connect` with no arguments from that directory reads the config automatically.
+
+### Workspace config
+
+A workspace groups multiple projects under a shared root. Create one with:
+
+```bash
+cd ~/work
+graft init --workspace
+```
+
+This creates a `graft.yaml` with `workspace: true`. When you run `graft connect` from a project directory inside the workspace, graft walks up the directory tree looking for the workspace root. If found and `syncWorkspace` is enabled, the entire workspace directory is synced rather than just the project subdirectory.
+
+```
+~/work/                  <- workspace root (graft.yaml with workspace: true)
+  infra/
+    projectA/            <- project (graft.yaml with destinations)
+    projectB/            <- project (graft.yaml with destinations)
+```
+
+### Background connections
+
+Connections created with `--background` are excluded from CWD-based auto-selection. This is useful for auxiliary connections (e.g. a shared build server) that you only want to use explicitly via `--to` or `graft use`:
+
+```bash
+graft connect . user@build-server --background --name build
+graft use build          # explicitly switch to it
+```
 
 ## Coming Soon
 

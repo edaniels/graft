@@ -387,8 +387,8 @@ func TestRemoteDaemonInstallGuard(t *testing.T) {
 	t.Run("shared across connections", func(t *testing.T) {
 		daemon := newRemoteDaemon(&noopConnector{})
 
-		conn1 := newConnection(daemon, "conn1", "", "")
-		conn2 := newConnection(daemon, "conn2", "", "")
+		conn1 := newConnection(daemon, "conn1", "", "", false)
+		conn2 := newConnection(daemon, "conn2", "", "", false)
 
 		test.That(t, conn1.daemon.alreadyInstalled(), test.ShouldBeFalse)
 		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeFalse)

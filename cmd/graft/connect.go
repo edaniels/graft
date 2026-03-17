@@ -19,6 +19,7 @@ var (
 	connectForwardPrefix bool
 	connectSyncFlag      bool
 	connectOS            string
+	connectBackground    bool
 )
 
 var connectCmd = &cobra.Command{
@@ -50,14 +51,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 		// Parse remote_dir from destination (SCP-style colon syntax).
 		// Only for non-docker destinations.
 		if !strings.HasPrefix(destination, "docker://") {
-			if strings.HasPrefix(destination, "ssh://") {
-				// For ssh:// URLs, extract remote dir from the path component
-				// so that ssh://user@host:22 (port) is not confused with
-				// user@host:~/dir (remote dir).
-				destination, remoteDir = parseSSHURLRemoteDir(destination)
-			} else {
-				destination, remoteDir = parseDestinationRemoteDir(destination)
-			}
+			destination, remoteDir = parseDestination(destination)
 		}
 
 		// Resolve local_dir to absolute path.
@@ -80,6 +74,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 			ForwardCommands: connectForward,
 			ForwardPrefix:   connectForwardPrefix,
 			WithSync:        connectSyncFlag,
+			Background:      connectBackground,
 		}
 
 		switch {
@@ -97,7 +92,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 				return cliExit("--os is only valid for docker:// destinations", 1)
 			}
 
-			params.Destination = strings.TrimPrefix(destination, "ssh://")
+			params.Destination = destination
 
 			return client.InitializeRemoteConnection(ctx, params)
 		}
@@ -141,6 +136,18 @@ func parseSSHURLRemoteDir(dest string) (string, string) {
 
 	// Not a port - the whole thing is a remote dir (e.g., "some:path").
 	return "ssh://" + bareDest, afterHost
+}
+
+// parseDestination parses a raw destination string into a bare host (user@host, no scheme)
+// and an optional remote directory. It handles both ssh:// URLs and SCP-style user@host:dir.
+func parseDestination(raw string) (string, string) {
+	if strings.HasPrefix(raw, "ssh://") {
+		dest, dir := parseSSHURLRemoteDir(raw)
+
+		return strings.TrimPrefix(dest, "ssh://"), dir
+	}
+
+	return parseDestinationRemoteDir(raw)
 }
 
 func isNumeric(s string) bool {
@@ -298,6 +305,9 @@ func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectPar
 		ForwardPrefix:   in.destConfig.Prefix,
 	}
 
+	// Workspace sync takes precedence over project-level sync because it syncs
+	// the entire workspace directory (setting SyncSource/SyncDest), making a
+	// narrower project sync redundant.
 	if in.syncWorkspace && in.workspaceDir != "" {
 		relPath, err := filepath.Rel(in.workspaceDir, in.projectDir)
 		if err == nil && relPath != "." {
@@ -306,6 +316,8 @@ func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectPar
 
 		params.SyncSource = in.workspaceDir
 		params.SyncDest = in.destConfig.SyncTo
+		params.WithSync = true
+	} else if in.destConfig.Sync {
 		params.WithSync = true
 	}
 
@@ -330,6 +342,7 @@ func init() {
 	connectCmd.Flags().BoolVar(&connectForwardPrefix, "forward-prefix", false, "Forward with connection name prefix")
 	connectCmd.Flags().BoolVar(&connectSyncFlag, "sync", false, "Enable file synchronization")
 	connectCmd.Flags().StringVar(&connectOS, "os", "", "Container OS (docker:// only)")
+	connectCmd.Flags().BoolVar(&connectBackground, "background", false, "Exclude from CWD-based auto-selection")
 
 	rootCmd.AddCommand(connectCmd)
 	rootCmd.AddCommand(disconnectCmd)

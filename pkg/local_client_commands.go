@@ -284,6 +284,9 @@ type ConnectParams struct {
 	// SyncSource/SyncDest override LocalRoot/RemoteRoot for sync when set.
 	SyncSource string
 	SyncDest   string
+
+	// Background excludes this connection from CWD-based auto-selection.
+	Background bool
 }
 
 // InitializeRemoteConnection sets up an SSH based connection.
@@ -308,6 +311,7 @@ func (client *LocalClient) InitializeRemoteConnection(ctx context.Context, param
 		Pid:         uint64(os.Getppid()), //nolint:gosec // overflow okay
 		LocalRoot:   params.LocalRoot,
 		RemoteRoot:  params.RemoteRoot,
+		Background:  params.Background,
 	})
 	if err != nil {
 		return client.handleError(err)
@@ -328,6 +332,7 @@ func (client *LocalClient) InitializeDockerConnection(ctx context.Context, param
 		OperatingSystem: params.OSName,
 		LocalRoot:       params.LocalRoot,
 		RemoteRoot:      params.RemoteRoot,
+		Background:      params.Background,
 	})
 	if err != nil {
 		return client.handleError(err)
@@ -733,6 +738,24 @@ func (client *LocalClient) Which(ctx context.Context, cmd string) error {
 	}
 
 	fmt.Fprintf(client.errWriter, "%s: %s\n", resp.GetConnectionName(), resp.GetRemotePath())
+
+	return nil
+}
+
+// PinConnection pins a connection to the current session.
+func (client *LocalClient) PinConnection(ctx context.Context, connName string) error {
+	sessPID, ok := client.sessionPID()
+	if !ok {
+		sessPID = uint64(os.Getppid()) //nolint:gosec // overflow okay
+	}
+
+	_, err := client.SessionPinConnection(ctx, &graftv1.SessionPinConnectionRequest{
+		Pid:            sessPID,
+		ConnectionName: connName,
+	})
+	if err != nil {
+		return client.handleError(err)
+	}
 
 	return nil
 }

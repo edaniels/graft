@@ -11,6 +11,8 @@ import (
 	"go.viam.com/test"
 )
 
+const shellZsh = "zsh"
+
 var testGraftBinary string
 
 func TestMain(m *testing.M) {
@@ -147,11 +149,11 @@ func TestActivateScriptConnectionPrompt(t *testing.T) {
 			script, err := generateActivateScript(shell, exePath)
 			test.That(t, err, test.ShouldBeNil)
 
-			// Script must NOT read per-session current_connection file (uses connection_roots only)
-			test.That(t, script, test.ShouldNotContainSubstring, "current_connection")
+			// Script reads per-session current_connection file (written by daemon, respects pins + CWD)
+			test.That(t, script, test.ShouldContainSubstring, "current_connection")
 
-			// Script uses global connection_roots file for immediate CWD matching
-			test.That(t, script, test.ShouldContainSubstring, "connection_roots")
+			// Script should NOT duplicate CWD matching - the daemon handles that
+			test.That(t, script, test.ShouldNotContainSubstring, "connection_roots")
 
 			// Script sets GRAFT_CONNECTION env var
 			test.That(t, script, test.ShouldContainSubstring, "GRAFT_CONNECTION")
@@ -160,6 +162,80 @@ func TestActivateScriptConnectionPrompt(t *testing.T) {
 			test.That(t, script, test.ShouldContainSubstring, "GRAFT_PROMPT_DISABLE")
 		})
 	}
+}
+
+func setupSessionConnFile(t *testing.T, connName string) string {
+	t.Helper()
+
+	tmpHome := t.TempDir()
+	stateDir := filepath.Join(tmpHome, ".local", "state", "graft", "local", "sessions", "12345")
+	test.That(t, os.MkdirAll(filepath.Join(stateDir, "shims"), 0o755), test.ShouldBeNil)
+	test.That(t, os.WriteFile(filepath.Join(stateDir, "current_connection"), []byte(connName), 0o600), test.ShouldBeNil)
+
+	return tmpHome
+}
+
+func TestActivatePromptReadsCurrentConnectionFile(t *testing.T) {
+	for _, shell := range []string{shellZsh, "bash"} {
+		t.Run(shell, func(t *testing.T) {
+			if !shellAvailable(shell) {
+				t.Skipf("%s not available on this system", shell)
+			}
+
+			tmpHome := setupSessionConnFile(t, "labos")
+
+			script := fmt.Sprintf(`
+eval "$(%s activate %s)"
+export GRAFT_SESSION=12345
+_graft_resolve_connection
+echo "CONNECTION=$GRAFT_CONNECTION"
+`, testGraftBinary, shell)
+
+			args := []string{"--norc", "--noprofile", "-c", script}
+			if shell == shellZsh {
+				args = []string{"-f", "-c", script}
+			}
+
+			cmd := exec.CommandContext(context.Background(), shell, args...)
+
+			cmd.Env = append(os.Environ(), "HOME="+tmpHome)
+
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Logf("%s test output:\n%s", shell, string(output))
+			}
+
+			test.That(t, err, test.ShouldBeNil)
+			test.That(t, string(output), test.ShouldContainSubstring, "CONNECTION=labos")
+		})
+	}
+
+	t.Run("fish", func(t *testing.T) {
+		if !shellAvailable("fish") {
+			t.Skip("fish not available on this system")
+		}
+
+		tmpHome := setupSessionConnFile(t, "labos")
+
+		script := fmt.Sprintf(`
+%s activate fish | source 2>/dev/null
+set -gx GRAFT_SESSION 12345
+_graft_update_connection
+echo "CONNECTION=$GRAFT_CONNECTION"
+`, testGraftBinary)
+
+		cmd := exec.CommandContext(context.Background(), "fish", "--no-config", "-c", script)
+
+		cmd.Env = append(os.Environ(), "HOME="+tmpHome)
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("fish test output:\n%s", string(output))
+		}
+
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, string(output), test.ShouldContainSubstring, "CONNECTION=labos")
+	})
 }
 
 func TestActivateScriptConnectionPromptPrefix(t *testing.T) {

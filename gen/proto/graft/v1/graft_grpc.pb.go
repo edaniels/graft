@@ -42,6 +42,7 @@ const (
 	GraftService_SessionWhich_FullMethodName                    = "/graft.v1.GraftService/SessionWhich"
 	GraftService_SessionShimmedCommands_FullMethodName          = "/graft.v1.GraftService/SessionShimmedCommands"
 	GraftService_SessionSelectConnection_FullMethodName         = "/graft.v1.GraftService/SessionSelectConnection"
+	GraftService_SessionPinConnection_FullMethodName            = "/graft.v1.GraftService/SessionPinConnection"
 	GraftService_RunCommand_FullMethodName                      = "/graft.v1.GraftService/RunCommand"
 )
 
@@ -129,6 +130,8 @@ type GraftServiceClient interface {
 	SessionShimmedCommands(ctx context.Context, in *SessionShimmedCommandsRequest, opts ...grpc.CallOption) (*SessionShimmedCommandsResponse, error)
 	// SessionSelectConnection returns the best connection for session.
 	SessionSelectConnection(ctx context.Context, in *SessionSelectConnectionRequest, opts ...grpc.CallOption) (*SessionSelectConnectionResponse, error)
+	// SessionPinConnection pins a connection to a session, overriding CWD-based auto-selection.
+	SessionPinConnection(ctx context.Context, in *SessionPinConnectionRequest, opts ...grpc.CallOption) (*SessionPinConnectionResponse, error)
 	// RunCommand runs the given command on the daemon (locally or forwarded to remote) and exposes std[in/out/err] streams to use.
 	//
 	// Additionally, the client can control tty information like terminal resizing.
@@ -409,6 +412,16 @@ func (c *graftServiceClient) SessionSelectConnection(ctx context.Context, in *Se
 	return out, nil
 }
 
+func (c *graftServiceClient) SessionPinConnection(ctx context.Context, in *SessionPinConnectionRequest, opts ...grpc.CallOption) (*SessionPinConnectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionPinConnectionResponse)
+	err := c.cc.Invoke(ctx, GraftService_SessionPinConnection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *graftServiceClient) RunCommand(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunCommandRequest, RunCommandResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &GraftService_ServiceDesc.Streams[6], GraftService_RunCommand_FullMethodName, cOpts...)
@@ -506,6 +519,8 @@ type GraftServiceServer interface {
 	SessionShimmedCommands(context.Context, *SessionShimmedCommandsRequest) (*SessionShimmedCommandsResponse, error)
 	// SessionSelectConnection returns the best connection for session.
 	SessionSelectConnection(context.Context, *SessionSelectConnectionRequest) (*SessionSelectConnectionResponse, error)
+	// SessionPinConnection pins a connection to a session, overriding CWD-based auto-selection.
+	SessionPinConnection(context.Context, *SessionPinConnectionRequest) (*SessionPinConnectionResponse, error)
 	// RunCommand runs the given command on the daemon (locally or forwarded to remote) and exposes std[in/out/err] streams to use.
 	//
 	// Additionally, the client can control tty information like terminal resizing.
@@ -588,6 +603,9 @@ func (UnimplementedGraftServiceServer) SessionShimmedCommands(context.Context, *
 }
 func (UnimplementedGraftServiceServer) SessionSelectConnection(context.Context, *SessionSelectConnectionRequest) (*SessionSelectConnectionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SessionSelectConnection not implemented")
+}
+func (UnimplementedGraftServiceServer) SessionPinConnection(context.Context, *SessionPinConnectionRequest) (*SessionPinConnectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SessionPinConnection not implemented")
 }
 func (UnimplementedGraftServiceServer) RunCommand(grpc.BidiStreamingServer[RunCommandRequest, RunCommandResponse]) error {
 	return status.Error(codes.Unimplemented, "method RunCommand not implemented")
@@ -973,6 +991,24 @@ func _GraftService_SessionSelectConnection_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GraftService_SessionPinConnection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SessionPinConnectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).SessionPinConnection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_SessionPinConnection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).SessionPinConnection(ctx, req.(*SessionPinConnectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _GraftService_RunCommand_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(GraftServiceServer).RunCommand(&grpc.GenericServerStream[RunCommandRequest, RunCommandResponse]{ServerStream: stream})
 }
@@ -1054,6 +1090,10 @@ var GraftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SessionSelectConnection",
 			Handler:    _GraftService_SessionSelectConnection_Handler,
+		},
+		{
+			MethodName: "SessionPinConnection",
+			Handler:    _GraftService_SessionPinConnection_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -129,6 +129,8 @@ type ConnectionConfig struct {
 	// A list of file synchronizations for this connection. It's unclear what problems, if any, occur if there are overlapping
 	// intents.
 	Synchronizations []SynchronizationIntentConfig `yaml:"synchronizations"`
+	// Whether this connection is a background connection, excluded from CWD-based auto-selection.
+	Background bool `yaml:"background,omitempty"`
 }
 
 var errConnectionConfigDuplicateForwarding = errors.NewBare("connection duplicate forwarding detected")

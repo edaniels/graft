@@ -53,6 +53,7 @@ type Connection struct {
 	name       string
 	localRoot  string
 	remoteRoot string
+	background bool
 
 	mu               sync.Mutex
 	stateHash        uint32
@@ -62,14 +63,20 @@ type Connection struct {
 }
 
 // newConnection creates a connection backed by the given daemon.
-func newConnection(daemon *remoteDaemon, name, localRoot, remoteRoot string) *Connection {
+func newConnection(daemon *remoteDaemon, name, localRoot, remoteRoot string, background bool) *Connection {
 	return &Connection{
 		daemon:           daemon,
 		name:             name,
 		localRoot:        localRoot,
 		remoteRoot:       remoteRoot,
+		background:       background,
 		synchronizations: map[string]activeSync{},
 	}
+}
+
+// Background returns whether this is a background connection excluded from CWD-based auto-selection.
+func (conn *Connection) Background() bool {
+	return conn.background
 }
 
 // RunCommand runs a command on the remote daemon.

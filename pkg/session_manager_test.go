@@ -62,17 +62,22 @@ func TestWriteSessionConnectionFile(t *testing.T) {
 	})
 }
 
-func TestUpdateSessionCWDReconciles(t *testing.T) {
-	localRoot := t.TempDir()
-
-	connMgr := &ConnectionManager{
-		connections:         map[string]*Connection{},
-		connectionRootsPath: filepath.Join(t.TempDir(), connectionRootsFileName),
-	}
-	connMgr.connections["myconn"] = &Connection{
-		name:      "myconn",
+// TODO(erd): unify with newConnection so tests exercise the real creation path.
+func newTestConnection(name, localRoot string) *Connection {
+	return &Connection{
+		name:      name,
 		localRoot: localRoot,
 		daemon:    &remoteDaemon{state: ConnectionStateConnected},
+	}
+}
+
+// TODO(erd): unify with NewSessionManager/NewConnectionManager so tests exercise real construction.
+func newTestSessionManager(t *testing.T, conns map[string]*Connection) (*SessionManager, string) {
+	t.Helper()
+
+	connMgr := &ConnectionManager{
+		connections:         conns,
+		connectionRootsPath: filepath.Join(t.TempDir(), connectionRootsFileName),
 	}
 
 	sessionsRoot, err := SessionsRoot()
@@ -84,6 +89,16 @@ func TestUpdateSessionCWDReconciles(t *testing.T) {
 		rootPath: sessionsRoot,
 	}
 
+	return mgr, sessionsRoot
+}
+
+func TestUpdateSessionCWDReconciles(t *testing.T) {
+	localRoot := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"myconn": newTestConnection("myconn", localRoot),
+	})
+
 	// Use a PID unlikely to conflict with real processes.
 	pid := uint64(99999)
 
@@ -94,11 +109,158 @@ func TestUpdateSessionCWDReconciles(t *testing.T) {
 
 	// Call UpdateSessionCWD with a CWD inside the connection's local root.
 	ctx := context.Background()
-	err = mgr.UpdateSessionCWD(ctx, pid, localRoot)
+	err := mgr.UpdateSessionCWD(ctx, pid, localRoot)
 	test.That(t, err, test.ShouldBeNil)
 
 	// The current_connection file should be written immediately (no tick needed).
 	data, readErr := os.ReadFile(filepath.Join(sessPath, currentConnectionFileName))
 	test.That(t, readErr, test.ShouldBeNil)
 	test.That(t, string(data), test.ShouldEqual, "myconn")
+}
+
+func TestSelectConnectionUsesPin(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"connA": newTestConnection("connA", rootA),
+		"connB": newTestConnection("connB", rootB),
+	})
+
+	pid := uint64(99990)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99990")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	// CWD inside rootA normally resolves to connA.
+	err := mgr.UpdateSessionCWD(ctx, pid, rootA)
+	test.That(t, err, test.ShouldBeNil)
+
+	sess, err := mgr.SessionByPID(pid)
+	test.That(t, err, test.ShouldBeNil)
+
+	conn, err := mgr.selectConnection(ctx, sess, "", rootA)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, conn.Name(), test.ShouldEqual, "connA")
+
+	// Pin to connB - should override CWD.
+	sess.SetPinnedConnection("connB")
+	conn, err = mgr.selectConnection(ctx, sess, "", rootA)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, conn.Name(), test.ShouldEqual, "connB")
+}
+
+func TestSelectConnectionClearPin(t *testing.T) {
+	rootA := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"connA": newTestConnection("connA", rootA),
+		"connB": newTestConnection("connB", t.TempDir()),
+	})
+
+	pid := uint64(99989)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99989")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+	err := mgr.UpdateSessionCWD(ctx, pid, rootA)
+	test.That(t, err, test.ShouldBeNil)
+
+	sess, err := mgr.SessionByPID(pid)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Pin to connB, then clear.
+	sess.SetPinnedConnection("connB")
+	sess.SetPinnedConnection("")
+
+	conn, err := mgr.selectConnection(ctx, sess, "", rootA)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, conn.Name(), test.ShouldEqual, "connA")
+}
+
+func TestPinConnectionValidatesExists(t *testing.T) {
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{})
+
+	pid := uint64(99988)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99988")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	_, err := mgr.PinConnection(ctx, pid, "nonexistent")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestTickReconcileSessionWithPin(t *testing.T) {
+	rootA := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"connA": newTestConnection("connA", rootA),
+		"connB": newTestConnection("connB", t.TempDir()),
+	})
+
+	pid := uint64(99987)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99987")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	// Set CWD inside rootA.
+	err := mgr.UpdateSessionCWD(ctx, pid, rootA)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Without pin, current_connection reflects CWD match.
+	data, readErr := os.ReadFile(filepath.Join(sessPath, currentConnectionFileName))
+	test.That(t, readErr, test.ShouldBeNil)
+	test.That(t, string(data), test.ShouldEqual, "connA")
+
+	// Pin to connB and reconcile.
+	_, err = mgr.PinConnection(ctx, pid, "connB")
+	test.That(t, err, test.ShouldBeNil)
+
+	data, readErr = os.ReadFile(filepath.Join(sessPath, currentConnectionFileName))
+	test.That(t, readErr, test.ShouldBeNil)
+	test.That(t, string(data), test.ShouldEqual, "connB")
+}
+
+func TestUpdateSessionCWDReconcileMultipleConnections(t *testing.T) {
+	wsRoot := t.TempDir()
+	projARoot := filepath.Join(wsRoot, "infra", "projectA")
+	projBRoot := filepath.Join(wsRoot, "infra", "projectB")
+
+	test.That(t, os.MkdirAll(projARoot, DirPerms), test.ShouldBeNil)
+	test.That(t, os.MkdirAll(projBRoot, DirPerms), test.ShouldBeNil)
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"connA": newTestConnection("connA", projARoot),
+		"connB": newTestConnection("connB", projBRoot),
+	})
+
+	pid := uint64(99998)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99998")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	// CWD inside projectA should resolve to connA.
+	err := mgr.UpdateSessionCWD(ctx, pid, projARoot)
+	test.That(t, err, test.ShouldBeNil)
+
+	data, readErr := os.ReadFile(filepath.Join(sessPath, currentConnectionFileName))
+	test.That(t, readErr, test.ShouldBeNil)
+	test.That(t, string(data), test.ShouldEqual, "connA")
+
+	// CWD inside projectB should resolve to connB.
+	err = mgr.UpdateSessionCWD(ctx, pid, projBRoot)
+	test.That(t, err, test.ShouldBeNil)
+
+	data, readErr = os.ReadFile(filepath.Join(sessPath, currentConnectionFileName))
+	test.That(t, readErr, test.ShouldBeNil)
+	test.That(t, string(data), test.ShouldEqual, "connB")
 }

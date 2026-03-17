@@ -5,3 +5,5 @@ cmd/scratch
 .DS_Store
 custom-gcl
 /graft
+# Nix build result
+result

@@ -13,10 +13,10 @@ A local-first remote development platform. Work with remote files and commands a
 
 ## Supported Platforms
 
-| | Local (client) | Remote (target) |
-|---|---|---|
-| macOS | yes | |
-| Linux | yes | yes |
+|       | Local (client) | Remote (target) |
+| ----- | -------------- | --------------- |
+| macOS | yes            |                 |
+| Linux | yes            | yes             |
 
 ## Install
 
@@ -25,6 +25,30 @@ curl --proto '=https' --tlsv1.2 -sSf https://graft.run/install.sh | sh
 ```
 
 Options: `--install-dir <dir>`, `--version <tag>`
+
+#### Alternative Installation methods:
+
+<details>
+<summary>Nix Flakes</summary>
+
+```nix
+# In your flake inputs add graft:
+inputs = {
+    # ...
+    graft.url = "github:edaniels/graft";
+    # ...
+}
+
+# In your configuration add graft to your systemPackages:
+# ${system} should be defined as your current platform. Ex: "x86_64-linux" or "aarch64-darwin".
+environment.systemPackages = [
+    # ...
+    graft.packages.${system}.default
+    # ...
+]
+```
+
+</details>
 
 ## Quick Start
 
@@ -66,17 +90,17 @@ All of these commands detect the connection from your current directory. You can
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `connect` | Connect to a remote machine (SSH or Docker) |
-| `disconnect` | Disconnect from a remote connection |
-| `run` | Run a command on the remote |
-| `shell` | Open a remote shell |
-| `sync` | Sync files to the remote |
-| `forward` | Forward local commands to the remote |
-| `status` | Show connection status |
-| `doctor` | Check environment setup and diagnose issues |
-| `init` | Generate a graft.yaml configuration file for future `graft connect`s |
+| Command      | Description                                                          |
+| ------------ | -------------------------------------------------------------------- |
+| `connect`    | Connect to a remote machine (SSH or Docker)                          |
+| `disconnect` | Disconnect from a remote connection                                  |
+| `run`        | Run a command on the remote                                          |
+| `shell`      | Open a remote shell                                                  |
+| `sync`       | Sync files to the remote                                             |
+| `forward`    | Forward local commands to the remote                                 |
+| `status`     | Show connection status                                               |
+| `doctor`     | Check environment setup and diagnose issues                          |
+| `init`       | Generate a graft.yaml configuration file for future `graft connect`s |
 
 ## Coming Soon
 

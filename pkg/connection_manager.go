@@ -96,16 +96,54 @@ func (mgr *ConnectionManager) getOrCreateDaemonForConnection(
 	return daemon, nil, nil
 }
 
+var errOverlappingLocalRoot = errors.NewBare("local root overlaps with existing connection")
+
 // createConnection creates a new connection backed by the given daemon and registers it.
-func (mgr *ConnectionManager) createConnection(name, localRoot, remoteRoot string, daemon *remoteDaemon) *Connection {
+// It returns an error if a non-background connection's local root overlaps with an
+// existing non-background connection's local root.
+func (mgr *ConnectionManager) createConnection(
+	name, localRoot, remoteRoot string, daemon *remoteDaemon, background bool,
+) (*Connection, error) {
 	mgr.connMgrMu.Lock()
 	defer mgr.connMgrMu.Unlock()
 
-	conn := newConnection(daemon, name, localRoot, remoteRoot)
+	if !background && localRoot != "" {
+		if err := mgr.checkOverlappingRoots(localRoot); err != nil {
+			return nil, err
+		}
+	}
+
+	conn := newConnection(daemon, name, localRoot, remoteRoot, background)
 	mgr.connections[name] = conn
 	mgr.writeConnectionRootsFile()
 
-	return conn
+	return conn, nil
+}
+
+// checkOverlappingRoots checks whether localRoot overlaps with any existing non-background
+// connection's local root. Must be called with connMgrMu held.
+func (mgr *ConnectionManager) checkOverlappingRoots(localRoot string) error {
+	newRoot := strings.ToLower(localRoot)
+
+	for _, conn := range mgr.connections {
+		if conn.background || conn.localRoot == "" {
+			continue
+		}
+
+		existingRoot := strings.ToLower(conn.localRoot)
+
+		if _, ok := hasPathPrefix(newRoot, existingRoot); ok {
+			return errors.WrapSuffix(errOverlappingLocalRoot,
+				fmt.Sprintf("'%s' overlaps with connection '%s' (%s)", localRoot, conn.name, conn.localRoot))
+		}
+
+		if _, ok := hasPathPrefix(existingRoot, newRoot); ok {
+			return errors.WrapSuffix(errOverlappingLocalRoot,
+				fmt.Sprintf("'%s' overlaps with connection '%s' (%s)", localRoot, conn.name, conn.localRoot))
+		}
+	}
+
+	return nil
 }
 
 // reassignDaemon re-keys a daemon after URL resolution (e.g. SSH config resolution
@@ -259,6 +297,7 @@ func (mgr *ConnectionManager) initialize(
 	remoteRoot string,
 	identity string,
 	destroyIfFail bool,
+	background bool,
 ) (*Connection, error) {
 	scheme, err := mgr.scheme(destURL)
 	if err != nil {
@@ -280,7 +319,10 @@ func (mgr *ConnectionManager) initialize(
 	}
 
 	// Create the connection early so it is visible in Connections() during initialization.
-	conn := mgr.createConnection(name, localRoot, remoteRoot, daemon)
+	conn, err := mgr.createConnection(name, localRoot, remoteRoot, daemon, background)
+	if err != nil {
+		return nil, err
+	}
 
 	// Initialize the daemon. The first caller does the work; concurrent callers
 	// block until initialization completes. Already-Connected daemons return immediately.
@@ -316,17 +358,17 @@ func (mgr *ConnectionManager) initialize(
 
 // Initialize sets up a new connection with a daemon running at the given destination.
 func (mgr *ConnectionManager) Initialize(
-	ctx context.Context, name string, destURL *url.URL, localRoot, remoteRoot, identity string,
+	ctx context.Context, name string, destURL *url.URL, localRoot, remoteRoot, identity string, background bool,
 ) (*Connection, error) {
-	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, true)
+	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, true, background)
 }
 
 // Restore ensures a connection is re-established. It's similar to Initialize but will only ensure the connection's
 // daemon is running.
 func (mgr *ConnectionManager) Restore(
-	ctx context.Context, name string, destURL *url.URL, localRoot, remoteRoot, identity string,
+	ctx context.Context, name string, destURL *url.URL, localRoot, remoteRoot, identity string, background bool,
 ) (*Connection, error) {
-	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, false)
+	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, false, background)
 }
 
 var (
@@ -610,6 +652,10 @@ func (mgr *ConnectionManager) writeConnectionRootsFile() {
 	for _, name := range names {
 		conn := mgr.connections[name]
 
+		if conn.background {
+			continue
+		}
+
 		localRoot := conn.localRoot
 		if localRoot == "" {
 			continue
@@ -674,7 +720,13 @@ func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string) (
 
 	cwd = strings.ToLower(cwd)
 
+	matches := make([]*Connection, 0, len(mgr.connections))
+
 	for _, conn := range mgr.connections {
+		if conn.background {
+			continue
+		}
+
 		localRoot := conn.LocalRoot()
 		if localRoot == "" {
 			continue
@@ -700,7 +752,24 @@ func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string) (
 			continue
 		}
 
-		return conn, true
+		matches = append(matches, conn)
+	}
+
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+
+	if len(matches) > 1 {
+		names := make([]string, len(matches))
+		for i, m := range matches {
+			names[i] = m.Name()
+		}
+
+		slog.WarnContext(ctx, "multiple connections match cwd; cannot auto-select",
+			"cwd", cwd,
+			"connections", names)
+
+		return nil, false
 	}
 
 	return nil, false

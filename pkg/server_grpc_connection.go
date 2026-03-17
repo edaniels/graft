@@ -318,7 +318,9 @@ func (srv *Server) InitializeSSHConnection(
 	localRoot := req.GetLocalRoot()
 	remoteRoot := req.GetRemoteRoot()
 
-	conn, err := srv.connMgr.Initialize(ctx, name, destURL, localRoot, remoteRoot, srv.identity)
+	background := req.GetBackground()
+
+	conn, err := srv.connMgr.Initialize(ctx, name, destURL, localRoot, remoteRoot, srv.identity, background)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +331,7 @@ func (srv *Server) InitializeSSHConnection(
 		Destination: conn.daemon.Destination(),
 		LocalRoot:   localRoot,
 		RemoteRoot:  remoteRoot,
+		Background:  background,
 	})
 	srv.persistConfig()
 
@@ -363,7 +366,9 @@ func (srv *Server) InitializeContainerConnection(
 	localRoot := req.GetLocalRoot()
 	remoteRoot := req.GetRemoteRoot()
 
-	conn, err := srv.connMgr.Initialize(ctx, name, &destURL, localRoot, remoteRoot, srv.identity)
+	background := req.GetBackground()
+
+	conn, err := srv.connMgr.Initialize(ctx, name, &destURL, localRoot, remoteRoot, srv.identity, background)
 	if err != nil {
 		return nil, err
 	}
@@ -373,6 +378,7 @@ func (srv *Server) InitializeContainerConnection(
 		Destination: conn.daemon.Destination(),
 		LocalRoot:   localRoot,
 		RemoteRoot:  remoteRoot,
+		Background:  background,
 	})
 	srv.persistConfig()
 

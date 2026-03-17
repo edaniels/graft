@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,15 +13,16 @@ import (
 )
 
 var (
-	initWorkspace bool
-	initSyncTo    string
-	initForward   []string
-	initPrefix    bool
-	initForce     bool
+	initWorkspace     bool
+	initName          string
+	initSync          bool
+	initForward       []string
+	initForwardPrefix bool
+	initForce         bool
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init [flags] [name] [destination]",
+	Use:   "init [flags] <local_dir> <destination>[:<remote_dir>]",
 	Short: "Generate a graft.yaml configuration file",
 	Long: `Generate a graft.yaml configuration file.
 
@@ -28,7 +30,10 @@ Workspace mode (--workspace, 0 args):
   graft init --workspace
 
 Project mode (2 args):
-  graft init <name> <destination> [flags]`,
+  graft init <local_dir> <destination>[:<remote_dir>] --name <name> [flags]
+
+Example:
+  graft init . ubuntu@myhost:~/mydir --sync --name myconn --forward make`,
 	RunE: func(_ *cobra.Command, args []string) error {
 		if initWorkspace {
 			if len(args) != 0 {
@@ -39,7 +44,11 @@ Project mode (2 args):
 		}
 
 		if len(args) != 2 {
-			return cliExit("expected 2 arguments: name and destination", 1)
+			return cliExit("expected 2 arguments: local_dir and destination", 1)
+		}
+
+		if initName == "" {
+			return cliExit("--name is required", 1)
 		}
 
 		return runInitProject(args[0], args[1])
@@ -47,7 +56,7 @@ Project mode (2 args):
 }
 
 func runInitWorkspace() error {
-	if err := checkExistingConfig(); err != nil {
+	if err := checkExistingConfig("."); err != nil {
 		return err
 	}
 
@@ -69,32 +78,49 @@ func runInitWorkspace() error {
 	return nil
 }
 
-func runInitProject(name, destination string) error {
-	if err := checkExistingConfig(); err != nil {
-		return err
+func runInitProject(localDir, rawDestination string) error {
+	absDir, err := filepath.Abs(localDir)
+	if err != nil {
+		return errors.Wrap(err)
 	}
 
-	cfg := buildProjectConfig(name, destination, initSyncTo, initForward, initPrefix)
+	if checkErr := checkExistingConfig(absDir); checkErr != nil {
+		return checkErr
+	}
+
+	destination, remoteDir := parseDestination(rawDestination)
+
+	var user, host string
+	if i := strings.LastIndex(destination, "@"); i != -1 {
+		user = destination[:i]
+		host = destination[i+1:]
+	} else {
+		host = destination
+	}
+
+	cfg := buildProjectConfig(initName, host, user, remoteDir, initForward, initForwardPrefix, initSync)
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return errors.Wrap(err)
 	}
 
-	if err := os.WriteFile("graft.yaml", data, 0o600); err != nil {
+	configPath := filepath.Join(absDir, "graft.yaml")
+
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
 		return errors.Wrap(err)
 	}
 
 	fmt.Fprintln(os.Stderr, "created graft.yaml")
 
-	dest := cfg.Destinations[name]
+	dest := cfg.Destinations[initName]
 
 	displayHost := dest.Host
 	if dest.User != "" {
 		displayHost = dest.User + "@" + dest.Host
 	}
 
-	fmt.Fprintf(os.Stderr, "  destination: %s -> %s\n", name, displayHost)
+	fmt.Fprintf(os.Stderr, "  destination: %s -> %s\n", initName, displayHost)
 
 	if dest.SyncTo != "" {
 		fmt.Fprintf(os.Stderr, "  sync to:     %s\n", dest.SyncTo)
@@ -105,7 +131,7 @@ func runInitProject(name, destination string) error {
 		if dest.Prefix {
 			prefixed := make([]string, len(displayForwards))
 			for i, f := range displayForwards {
-				prefixed[i] = name + "-" + f
+				prefixed[i] = initName + "-" + f
 			}
 
 			displayForwards = prefixed
@@ -120,12 +146,12 @@ func runInitProject(name, destination string) error {
 	return nil
 }
 
-func checkExistingConfig() error {
+func checkExistingConfig(dir string) error {
 	if initForce {
 		return nil
 	}
 
-	if _, err := os.Stat("graft.yaml"); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "graft.yaml")); err == nil {
 		return cliExit("graft.yaml already exists (use --force to overwrite)", 1)
 	}
 
@@ -140,20 +166,13 @@ func buildWorkspaceConfig() WorkspaceConfig {
 	}
 }
 
-func buildProjectConfig(name, destination, syncTo string, forwards []string, prefix bool) ProjectConfig {
-	var user, host string
-	if i := strings.LastIndex(destination, "@"); i != -1 {
-		user = destination[:i]
-		host = destination[i+1:]
-	} else {
-		host = destination
-	}
-
+func buildProjectConfig(name, host, user, remoteDir string, forwards []string, prefix, sync bool) ProjectConfig {
 	destConfig := ProjectDestinationConfig{
 		Host:   host,
 		User:   user,
-		SyncTo: syncTo,
+		SyncTo: remoteDir,
 		Prefix: prefix,
+		Sync:   sync,
 	}
 
 	return ProjectConfig{
@@ -165,9 +184,10 @@ func buildProjectConfig(name, destination, syncTo string, forwards []string, pre
 
 func init() {
 	initCmd.Flags().BoolVar(&initWorkspace, "workspace", false, "Generate workspace config instead of project config")
-	initCmd.Flags().StringVar(&initSyncTo, "sync-to", "", "Remote sync destination path")
+	initCmd.Flags().StringVarP(&initName, "name", "n", "", "Connection name (required for project mode)")
+	initCmd.Flags().BoolVar(&initSync, "sync", false, "Enable file synchronization")
 	initCmd.Flags().StringSliceVar(&initForward, "forward", nil, "Commands to forward")
-	initCmd.Flags().BoolVar(&initPrefix, "prefix", false, "Prefix forwarded commands with connection name")
+	initCmd.Flags().BoolVar(&initForwardPrefix, "forward-prefix", false, "Prefix forwarded commands with connection name")
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Overwrite existing graft.yaml")
 
 	rootCmd.AddCommand(initCmd)

@@ -168,12 +168,24 @@ A session represents an active shell where graft is activated. It is identified 
 3. Prepends the shim directory to `PATH`
 4. Saves the original PATH as `_GC_LOCAL_PATH`
 5. Installs shell hooks:
-  - **precmd/prompt** - reports the current working directory to the daemon and resolves which connection is active for the prompt
+  - **precmd/prompt** - reports the current working directory to the daemon and reads the session's `current_connection` file to set `GRAFT_CONNECTION` for the prompt
   - **preexec** - extracts inline environment variable assignments for security
+
+### Connection selection
+
+When a session needs a connection (for running commands, opening a shell, etc.), the daemon follows this hierarchy:
+
+1. **Explicit name** - `--to <connection>` on the command line
+2. **Session pin** - set via `graft use <connection>`, stored as `pinnedConnection` on the session
+3. **CWD-based** - matches the session's current working directory against each connection's `localRoot`
+
+Background connections (created with `--background`) are excluded from CWD-based matching but can still be used explicitly or via pinning.
+
+If multiple non-background connections match the CWD, auto-selection is refused and the user must pin or specify explicitly.
 
 ### CWD tracking
 
-Every time the prompt renders, the shell hook runs `graft report-cwd` in the background. The daemon uses this to determine which connection matches the current directory (by comparing against each connection's `localRoot`). This drives both the shell prompt indicator (`[connection-name]`) and which commands get shimmed.
+Every time the prompt renders, the shell hook runs `graft report-cwd` in the background. The daemon uses this to update the session's CWD state. The reconciliation loop then writes the resolved connection name to the session's `current_connection` file, which the shell prompt reads to display `[connection-name]`. The resolved name respects the selection hierarchy above (pin takes precedence over CWD).
 
 ## Command shimming
 
@@ -276,8 +288,8 @@ If a local port is already in use, the forward is marked as a conflict and repor
 | `~/.config/graft/local/config.yml` | Connection configuration |
 | `~/.local/state/graft/local/graftd.sock` | Local daemon socket |
 | `~/.local/state/graft/local/graftd.pid` | Local daemon PID file |
-| `~/.local/state/graft/local/sessions/` | Per-session shim directories |
-| `~/.local/state/graft/local/connection_roots` | CWD-to-connection mapping for shell prompt |
+| `~/.local/state/graft/local/sessions/` | Per-session shim directories and `current_connection` files |
+| `~/.local/state/graft/local/connection_roots` | CWD-to-connection mapping (used internally by the daemon) |
 | `~/.local/state/graft/local/logs/` | Local daemon logs |
 | `~/.cache/graft/binaries/` | Cached cross-compiled remote daemon binaries |
 

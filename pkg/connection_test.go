@@ -7,10 +7,11 @@ import (
 	"go.viam.com/test"
 )
 
+// TODO(erd): unify with newConnection so tests exercise the real creation path.
 func newTestConnectionWithRoots(localRoot, remoteRoot string) *Connection {
 	daemon := newRemoteDaemon(&noopConnector{})
 
-	return newConnection(daemon, "test", localRoot, remoteRoot)
+	return newConnection(daemon, "test", localRoot, remoteRoot, false)
 }
 
 func TestMatchCWD(t *testing.T) {

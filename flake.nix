@@ -8,18 +8,38 @@
     self,
     nixpkgs,
   }: let
-    systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
+    systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
     forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
   in {
-    packages = forAllSystems (pkgs: rec {
-      graft = pkgs.buildGoModule.override {go = pkgs.go_1_26;} {
+    packages = forAllSystems (pkgs: let
+      go = pkgs.go_1_26;
+      version = self.shortRev or self.dirtyShortRev or "nix";
+    in rec {
+      graft = pkgs.buildGoModule.override {inherit go;} {
         pname = "graft";
-        version = self.shortRev or "dev";
+        inherit version;
         src = ./.;
         vendorHash = "sha256-1yH+Ln8H4+1pku0J2guZ/PlBnPqICmQjYoUbJMLxDbo=";
         goSum = ./go.sum;
         env.CGO_ENABLED = "0";
-        ldflags = ["-w" "-s"];
+
+        nativeBuildInputs = [pkgs.just pkgs.zstd];
+
+        # Cross-compile and embed daemon binaries using the justfile
+        preBuild = ''
+          if [[ "$name" != *"go-modules"* ]]; then
+            export BUILD_VERSION="${version}"
+            just prepare-embedded
+          fi
+        '';
+
+        tags = ["embed_binaries"];
+
+        ldflags = [
+          "-w"
+          "-s"
+          "-X github.com/edaniels/graft/pkg.buildVersion=${version}"
+        ];
         subPackages = ["cmd/graft"];
         doCheck = false;
         meta.mainProgram = "graft";

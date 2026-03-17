@@ -26,6 +26,30 @@ curl --proto '=https' --tlsv1.2 -sSf https://graft.run/install.sh | sh
 
 Options: `--install-dir <dir>`, `--version <tag>`
 
+#### Alternative Installation methods:
+
+<details>
+<summary>Nix Flakes</summary>
+
+```nix
+# In your flake inputs add graft:
+inputs = {
+    # ...
+    graft.url = "github:edaniels/graft";
+    # ...
+}
+
+# In your configuration add graft to your systemPackages:
+# ${system} should be defined as your current platform. Ex: "x86_64-linux" or "aarch64-darwin".
+environment.systemPackages = [
+    # ...
+    graft.packages.${system}.default
+    # ...
+]
+```
+
+</details>
+
 ## Quick Start
 
 **1. Activate shell integration** (add to your shell rc file):
@@ -90,27 +114,6 @@ See [docs/architecture.md](docs/architecture.md) for how graft works internally.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, including our [AI usage policy](CONTRIBUTING.md#ai-usage-policy). This project uses AI tools responsibly - all code is human-reviewed before merging, and all contributions must disclose AI usage.
-
-## Nix Install
-
-Graft can also be installed via [nix flakes](https://wiki.nixos.org/wiki/Flakes):
-
-```nix
-# In your flake inputs add graft:
-inputs = {
-    # ...
-    graft.url = "github:edaniels/graft";
-    # ...
-}
-
-# In your configuration add graft to your systemPackages:
-# ${system} should be defined as your current platform. Ex: "x86_64-linux" or "aarch64-darwin".
-environment.systemPackages = [
-    # ...
-    graft.packages.${system}.default
-    # ...
-]
-```
 
 ## Development
 

@@ -42,7 +42,12 @@ func (srv *Server) SessionSelectConnection(
 		return nil, updateErr
 	}
 
-	conn, err := srv.sessMgr.selectConnection(ctx, "", req.GetCwd())
+	sess, err := srv.sessMgr.SessionByPID(req.GetPid())
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := srv.sessMgr.selectConnection(ctx, sess, "", req.GetCwd())
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +72,19 @@ func (srv *Server) SessionSelectConnection(
 	}
 
 	return resp, nil
+}
+
+// SessionPinConnection pins a connection to a session, overriding CWD-based auto-selection.
+func (srv *Server) SessionPinConnection(
+	ctx context.Context,
+	req *graftv1.SessionPinConnectionRequest,
+) (*graftv1.SessionPinConnectionResponse, error) {
+	connName, err := srv.sessMgr.PinConnection(ctx, req.GetPid(), req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	return &graftv1.SessionPinConnectionResponse{ConnectionName: connName}, nil
 }
 
 // SessionShimmedCommands returns all commands that should be shimmed for a session across all established connections.

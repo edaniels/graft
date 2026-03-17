@@ -143,6 +143,9 @@ service GraftService {
   // SessionSelectConnection returns the best connection for session.
   rpc SessionSelectConnection(SessionSelectConnectionRequest) returns (SessionSelectConnectionResponse) {}
 
+  // SessionPinConnection pins a connection to a session, overriding CWD-based auto-selection.
+  rpc SessionPinConnection(SessionPinConnectionRequest) returns (SessionPinConnectionResponse) {}
+
   //
   // Command
   //
@@ -272,6 +275,7 @@ message InitializeSSHConnectionRequest {
   uint64 pid = 5;
   string local_root = 6;
   string remote_root = 7;
+  bool background = 8;
 }
 
 message InitializeSSHConnectionResponse {
@@ -286,6 +290,7 @@ message InitializeContainerConnectionRequest {
   string user_name = 5;
   string local_root = 6;
   string remote_root = 7;
+  bool background = 8;
 }
 
 message InitializeContainerConnectionResponse {
@@ -499,6 +504,15 @@ message ForwardPortStart {
 // ForwardPortResponse carries raw payload bytes from the remote back to local.
 message ForwardPortResponse {
   bytes payload = 1;
+}
+
+message SessionPinConnectionRequest {
+  uint64 pid = 1;
+  string connection_name = 2;
+}
+
+message SessionPinConnectionResponse {
+  string connection_name = 1;
 }
 
 // PortForwardStatus is the status of a single port forward, shown in `graft status`.

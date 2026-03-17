@@ -117,6 +117,41 @@ func TestResolveProjectConnectParams(t *testing.T) {
 		test.That(t, params.SyncDest, test.ShouldBeEmpty)
 		test.That(t, params.WithSync, test.ShouldBeFalse)
 	})
+
+	t.Run("project-level sync without workspace", func(t *testing.T) {
+		params := resolveProjectConnectParams(resolveProjectConnectInput{
+			projectDir:    "/home/user/myproject",
+			destName:      "myconn",
+			destConfig:    ProjectDestinationConfig{Host: "myhost", User: "ubuntu", SyncTo: "~/proj", Sync: true},
+			forwards:      []string{"make"},
+			workspaceDir:  "",
+			syncWorkspace: false,
+		})
+
+		test.That(t, params.WithSync, test.ShouldBeTrue)
+		test.That(t, params.RemoteRoot, test.ShouldEqual, "~/proj")
+	})
+
+	t.Run("project sync false means no sync without workspace", func(t *testing.T) {
+		params := resolveProjectConnectParams(resolveProjectConnectInput{
+			projectDir:    "/home/user/myproject",
+			destName:      "myconn",
+			destConfig:    ProjectDestinationConfig{Host: "myhost", User: "ubuntu", SyncTo: "~/proj", Sync: false},
+			forwards:      []string{"make"},
+			workspaceDir:  "",
+			syncWorkspace: false,
+		})
+
+		test.That(t, params.WithSync, test.ShouldBeFalse)
+	})
+}
+
+func TestConnectBackgroundFlag(t *testing.T) {
+	t.Run("flag is registered and defaults to false", func(t *testing.T) {
+		flag := connectCmd.Flags().Lookup("background")
+		test.That(t, flag, test.ShouldNotBeNil)
+		test.That(t, flag.DefValue, test.ShouldEqual, "false")
+	})
 }
 
 func TestParseConnectArgs(t *testing.T) {

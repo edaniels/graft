@@ -29,7 +29,7 @@ func TestBuildWorkspaceConfig(t *testing.T) {
 
 func TestBuildProjectConfig(t *testing.T) {
 	t.Run("basic with user@host", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "ubuntu@anvil-host", "", nil, false)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "", nil, false, false)
 
 		test.That(t, cfg.Version, test.ShouldEqual, "v1")
 		test.That(t, cfg.Forwards, test.ShouldBeEmpty)
@@ -40,40 +40,49 @@ func TestBuildProjectConfig(t *testing.T) {
 		test.That(t, dest.User, test.ShouldEqual, "ubuntu")
 		test.That(t, dest.SyncTo, test.ShouldBeEmpty)
 		test.That(t, dest.Prefix, test.ShouldBeFalse)
+		test.That(t, dest.Sync, test.ShouldBeFalse)
 	})
 
 	t.Run("basic without user", func(t *testing.T) {
-		cfg := buildProjectConfig("myconn", "myhost", "", nil, false)
+		cfg := buildProjectConfig("myconn", "myhost", "", "", nil, false, false)
 
-		dest := cfg.Destinations["myconn"]
+		dest := cfg.Destinations[testConnName]
 		test.That(t, dest.Host, test.ShouldEqual, "myhost")
 		test.That(t, dest.User, test.ShouldBeEmpty)
 	})
 
-	t.Run("with sync-to", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "ubuntu@anvil-host", "~/arc", nil, false)
+	t.Run("with remote dir as syncTo", func(t *testing.T) {
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", nil, false, false)
 
 		dest := cfg.Destinations["anvil"]
 		test.That(t, dest.SyncTo, test.ShouldEqual, "~/arc")
 	})
 
 	t.Run("with forwards", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "ubuntu@anvil-host", "", []string{"pulumi", "kubectl", "k9s"}, false)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "", []string{"pulumi", "kubectl", "k9s"}, false, false)
 
 		test.That(t, cfg.Forwards, test.ShouldResemble, []string{"pulumi", "kubectl", "k9s"})
 		test.That(t, cfg.Destinations["anvil"].Prefix, test.ShouldBeFalse)
 	})
 
 	t.Run("with forwards and prefix", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "ubuntu@anvil-host", "~/arc", []string{"pulumi", "kubectl", "k9s"}, true)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", []string{"pulumi", "kubectl", "k9s"}, true, false)
 
 		test.That(t, cfg.Forwards, test.ShouldResemble, []string{"pulumi", "kubectl", "k9s"})
 		test.That(t, cfg.Destinations["anvil"].Prefix, test.ShouldBeTrue)
 		test.That(t, cfg.Destinations["anvil"].SyncTo, test.ShouldEqual, "~/arc")
 	})
 
+	t.Run("with sync enabled", func(t *testing.T) {
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", nil, false, true)
+
+		dest := cfg.Destinations["anvil"]
+		test.That(t, dest.SyncTo, test.ShouldEqual, "~/arc")
+		test.That(t, dest.Sync, test.ShouldBeTrue)
+	})
+
 	t.Run("round-trip with connectFromProject structs", func(t *testing.T) {
-		cfg := buildProjectConfig("myconn", "user@host", "~/proj", []string{"make", "go"}, true)
+		cfg := buildProjectConfig("myconn", "host", "user", "~/proj", []string{"make", "go"}, true, true)
 
 		data, err := yaml.Marshal(cfg)
 		test.That(t, err, test.ShouldBeNil)
@@ -92,6 +101,112 @@ func TestBuildProjectConfig(t *testing.T) {
 		test.That(t, dest.User, test.ShouldEqual, "user")
 		test.That(t, dest.SyncTo, test.ShouldEqual, "~/proj")
 		test.That(t, dest.Prefix, test.ShouldBeTrue)
+		test.That(t, dest.Sync, test.ShouldBeTrue)
+	})
+}
+
+const testConnName = "myconn"
+
+func resetInitFlags() {
+	initName = testConnName
+	initSync = false
+	initForward = nil
+	initForwardPrefix = false
+	initForce = false
+}
+
+func TestRunInitProject(t *testing.T) {
+	t.Run("writes config to specified local dir", func(t *testing.T) {
+		dir := t.TempDir()
+
+		resetInitFlags()
+
+		err := runInitProject(dir, "ubuntu@myhost:~/proj")
+		test.That(t, err, test.ShouldBeNil)
+
+		data, err := os.ReadFile(filepath.Join(dir, "graft.yaml"))
+		test.That(t, err, test.ShouldBeNil)
+
+		var cfg ProjectConfig
+
+		err = yaml.Unmarshal(data, &cfg)
+		test.That(t, err, test.ShouldBeNil)
+
+		test.That(t, cfg.Destinations, test.ShouldHaveLength, 1)
+		dest := cfg.Destinations[testConnName]
+		test.That(t, dest.Host, test.ShouldEqual, "myhost")
+		test.That(t, dest.User, test.ShouldEqual, "ubuntu")
+		test.That(t, dest.SyncTo, test.ShouldEqual, "~/proj")
+		test.That(t, dest.Sync, test.ShouldBeFalse)
+	})
+
+	t.Run("parses ssh:// URL remote dir", func(t *testing.T) {
+		dir := t.TempDir()
+
+		resetInitFlags()
+
+		err := runInitProject(dir, "ssh://ubuntu@myhost:~/proj")
+		test.That(t, err, test.ShouldBeNil)
+
+		data, err := os.ReadFile(filepath.Join(dir, "graft.yaml"))
+		test.That(t, err, test.ShouldBeNil)
+
+		var cfg ProjectConfig
+
+		err = yaml.Unmarshal(data, &cfg)
+		test.That(t, err, test.ShouldBeNil)
+
+		dest := cfg.Destinations[testConnName]
+		test.That(t, dest.Host, test.ShouldEqual, "myhost")
+		test.That(t, dest.User, test.ShouldEqual, "ubuntu")
+		test.That(t, dest.SyncTo, test.ShouldEqual, "~/proj")
+	})
+
+	t.Run("with sync flag", func(t *testing.T) {
+		dir := t.TempDir()
+
+		resetInitFlags()
+
+		initSync = true
+
+		err := runInitProject(dir, "ubuntu@myhost:~/proj")
+		test.That(t, err, test.ShouldBeNil)
+
+		data, err := os.ReadFile(filepath.Join(dir, "graft.yaml"))
+		test.That(t, err, test.ShouldBeNil)
+
+		var cfg ProjectConfig
+
+		err = yaml.Unmarshal(data, &cfg)
+		test.That(t, err, test.ShouldBeNil)
+
+		dest := cfg.Destinations[testConnName]
+		test.That(t, dest.Sync, test.ShouldBeTrue)
+	})
+
+	t.Run("refuses overwrite without force", func(t *testing.T) {
+		dir := t.TempDir()
+		err := os.WriteFile(filepath.Join(dir, "graft.yaml"), []byte("existing"), 0o600)
+		test.That(t, err, test.ShouldBeNil)
+
+		resetInitFlags()
+
+		err = runInitProject(dir, "ubuntu@myhost")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "already exists")
+	})
+
+	t.Run("force overwrites existing config", func(t *testing.T) {
+		dir := t.TempDir()
+		err := os.WriteFile(filepath.Join(dir, "graft.yaml"), []byte("existing"), 0o600)
+		test.That(t, err, test.ShouldBeNil)
+
+		resetInitFlags()
+
+		initForce = true
+
+		err = runInitProject(dir, "ubuntu@myhost")
+		test.That(t, err, test.ShouldBeNil)
 	})
 }
 

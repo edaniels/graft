@@ -14,12 +14,13 @@ import (
 // forwardings eventually get created as files that are in this session's PATH, if the shimming
 // utility is installed into the shell.
 type Session struct {
-	sessMu      sync.Mutex
-	desiredFwds map[string][]ForwardCommandIntent
-	actualFwds  map[string]ForwardedCommand
-	dir         string
-	shimPath    string
-	cwd         string
+	sessMu           sync.Mutex
+	desiredFwds      map[string][]ForwardCommandIntent
+	actualFwds       map[string]ForwardedCommand
+	dir              string
+	shimPath         string
+	cwd              string
+	pinnedConnection string
 }
 
 // A ForwardedCommand is a tuple of a path to a command and a connection that command can run on.
@@ -34,6 +35,22 @@ func (sess *Session) CWD() string {
 	defer sess.sessMu.Unlock()
 
 	return sess.cwd
+}
+
+// PinnedConnection returns the name of the pinned connection, or "" if none.
+func (sess *Session) PinnedConnection() string {
+	sess.sessMu.Lock()
+	defer sess.sessMu.Unlock()
+
+	return sess.pinnedConnection
+}
+
+// SetPinnedConnection sets or clears the pinned connection for this session.
+func (sess *Session) SetPinnedConnection(name string) {
+	sess.sessMu.Lock()
+	defer sess.sessMu.Unlock()
+
+	sess.pinnedConnection = name
 }
 
 // ShimPath returns the directory that shims are added to.

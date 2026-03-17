@@ -71,19 +71,10 @@ function _graft_preexec () {
 }
 
 function _graft_resolve_connection () {
-  local _gc_roots_file=$GRAFT_STATE_HOME/graft/local/connection_roots
+  local _gc_conn_file=$GRAFT_STATE_HOME/graft/local/sessions/$GRAFT_SESSION/current_connection
   GRAFT_CONNECTION=""
-  if [[ -f "$_gc_roots_file" ]]; then
-    local _gc_cwd
-    _gc_cwd=$(pwd -P 2>/dev/null || pwd)
-    local _gc_line
-    while IFS=$'\t' read -r _gc_root _gc_name; do
-      [[ -n "$_gc_root" ]] || continue
-      if [[ "${_gc_cwd:l}" = "${_gc_root:l}"* ]]; then
-        GRAFT_CONNECTION=$_gc_name
-        break
-      fi
-    done < "$_gc_roots_file"
+  if [[ -f "$_gc_conn_file" ]]; then
+    GRAFT_CONNECTION=$(<"$_gc_conn_file")
   fi
   export GRAFT_CONNECTION
 }
@@ -151,20 +142,10 @@ _graft_preexec () {
 }
 
 _graft_resolve_connection () {
-  local _gc_roots_file=$GRAFT_STATE_HOME/graft/local/connection_roots
+  local _gc_conn_file=$GRAFT_STATE_HOME/graft/local/sessions/$GRAFT_SESSION/current_connection
   GRAFT_CONNECTION=""
-  if [[ -f "$_gc_roots_file" ]]; then
-    local _gc_cwd
-    _gc_cwd=$(pwd -P 2>/dev/null || pwd)
-    _gc_cwd="${_gc_cwd,,}"
-    local _gc_root _gc_name
-    while IFS=$'\t' read -r _gc_root _gc_name; do
-      [[ -n "$_gc_root" ]] || continue
-      if [[ "$_gc_cwd" = "${_gc_root,,}"* ]]; then
-        GRAFT_CONNECTION=$_gc_name
-        break
-      fi
-    done < "$_gc_roots_file"
+  if [[ -f "$_gc_conn_file" ]]; then
+    GRAFT_CONNECTION=$(< "$_gc_conn_file")
   fi
   export GRAFT_CONNECTION
 }
@@ -228,20 +209,10 @@ function _graft_postcmd --on-event fish_postexec
 end
 
 function _graft_update_connection
-  set -l _gc_roots_file $_GC_STATE_HOME/graft/local/connection_roots
+  set -l _gc_conn_file $_GC_STATE_HOME/graft/local/sessions/$GRAFT_SESSION/current_connection
   set -gx GRAFT_CONNECTION ""
-  if test -f $_gc_roots_file
-    set -l _gc_cwd (pwd -P 2>/dev/null; or pwd)
-    set _gc_cwd (string lower $_gc_cwd)
-    while read -l _gc_line
-      set -l _gc_parts (string split \t $_gc_line)
-      test (count $_gc_parts) -ge 2; or continue
-      set -l _gc_root (string lower $_gc_parts[1])
-      if string match -q "$_gc_root*" $_gc_cwd
-        set -gx GRAFT_CONNECTION $_gc_parts[2]
-        return
-      end
-    end < $_gc_roots_file
+  if test -f $_gc_conn_file
+    set -gx GRAFT_CONNECTION (cat $_gc_conn_file)
   end
 end
 

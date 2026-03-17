@@ -222,12 +222,21 @@ func (mgr *SessionManager) tickReconcileSession(runCtx context.Context, sess *Se
 
 	shimCommand(runCtx, shimPath, sudoCommandName)
 
-	// Update current connection file for shell prompt
+	// Update current connection file for shell prompt.
+	// Pinned connection takes precedence over CWD-based selection.
 	connName := ""
 
-	if cwd := sess.CWD(); cwd != "" {
-		if conn, ok := mgr.connMgr.ConnectionByCWD(runCtx, cwd); ok {
-			connName = conn.Name()
+	if pinned := sess.PinnedConnection(); pinned != "" {
+		if _, err := mgr.connMgr.Connection(pinned); err == nil {
+			connName = pinned
+		}
+	}
+
+	if connName == "" {
+		if cwd := sess.CWD(); cwd != "" {
+			if conn, ok := mgr.connMgr.ConnectionByCWD(runCtx, cwd); ok {
+				connName = conn.Name()
+			}
 		}
 	}
 
@@ -472,6 +481,30 @@ func (mgr *SessionManager) UpdateSessionCWD(ctx context.Context, sessionPID uint
 	return nil
 }
 
+// PinConnection pins a connection to a session, overriding CWD-based auto-selection.
+// An empty connName clears the pin.
+func (mgr *SessionManager) PinConnection(ctx context.Context, sessionPID uint64, connName string) (string, error) {
+	if connName != "" {
+		if _, err := mgr.connMgr.Connection(connName); err != nil {
+			return "", err
+		}
+	}
+
+	mgr.sessMgrMu.Lock()
+	defer mgr.sessMgrMu.Unlock()
+
+	sess, err := mgr.getOrCreateSession(sessionPID)
+	if err != nil {
+		return "", err
+	}
+
+	sess.SetPinnedConnection(connName)
+
+	mgr.tickReconcileSession(ctx, sess)
+
+	return connName, nil
+}
+
 // Close does nothing for now.
 func (mgr *SessionManager) Close() {
 }
@@ -498,18 +531,28 @@ func (mgr *SessionManager) Which(
 }
 
 // selectConnection figures out which connection to use based on the current state of the system.
-//
-// TODO(erd): this needs work like DesiredForwardingsForSession does in terms of the best UX
-// for how to accomplish this. In the past, we just took the first session/connection found which
-// works in the simplest of cases. Ideally we start with something like a hierarchy of:
-// - connection name specified
-// - session set a default
-// - determine via cwd.
-func (mgr *SessionManager) selectConnection(ctx context.Context, connName string, cwd string) (*Connection, error) {
+// The selection hierarchy is:
+// 1. Explicit connection name
+// 2. Session-pinned connection (via `graft use`)
+// 3. CWD-based auto-selection.
+func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, connName string, cwd string) (*Connection, error) {
 	slog.DebugContext(ctx, "lookup connection by name", "name", connName)
 
 	if connName != "" {
 		return mgr.connMgr.Connection(connName)
+	}
+
+	if sess != nil {
+		if pinned := sess.PinnedConnection(); pinned != "" {
+			slog.DebugContext(ctx, "lookup connection by session pin", "pinned", pinned)
+
+			conn, err := mgr.connMgr.Connection(pinned)
+			if err == nil {
+				return conn, nil
+			}
+
+			slog.WarnContext(ctx, "pinned connection unavailable; falling through to CWD", "pinned", pinned, "error", err)
+		}
 	}
 
 	slog.DebugContext(ctx, "lookup connection by cwd", "cwd", cwd)
@@ -524,8 +567,10 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, connName string
 	return nil, errors.New("no connection to start a shell with by default")
 }
 
-func (mgr *SessionManager) selectConnectionForCommand(ctx context.Context, connName, command, cwd string) (ForwardedCommand, error) {
-	conn, selectErr := mgr.selectConnection(ctx, connName, cwd)
+func (mgr *SessionManager) selectConnectionForCommand(
+	ctx context.Context, sess *Session, connName, command, cwd string,
+) (ForwardedCommand, error) {
+	conn, selectErr := mgr.selectConnection(ctx, sess, connName, cwd)
 	if selectErr != nil {
 		return ForwardedCommand{}, selectErr
 	}
@@ -604,7 +649,7 @@ func (mgr *SessionManager) RunCommand(
 	// path to the command on the remote side.
 	if exactCommand || shell {
 		// TODO(erd): Protect against race condition when reading sess.cwd.
-		selected, selectErr := mgr.selectConnectionForCommand(runCtx, connectionName, command, sess.cwd)
+		selected, selectErr := mgr.selectConnectionForCommand(runCtx, sess, connectionName, command, sess.cwd)
 		if selectErr != nil {
 			return nil, selectErr
 		}

@@ -76,6 +76,7 @@ type ProjectDestinationConfig struct {
 	User   string `yaml:"user"`
 	SyncTo string `yaml:"syncTo"`
 	Prefix bool   `yaml:"prefix"`
+	Sync   bool   `yaml:"sync"`
 }
 
 type ProjectConfig struct {

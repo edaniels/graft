@@ -243,7 +243,9 @@ func (srv *Server) restore(runCtx context.Context) error {
 
 			// TODO(erd): the restoration of this could probably be similar to initialization so that we don't
 			// need to write duplicate code.
-			if _, err := srv.connMgr.Restore(runCtx, conf.Name, destURL, conf.LocalRoot, conf.RemoteRoot, srv.identity); err != nil {
+			_, err = srv.connMgr.Restore(
+				runCtx, conf.Name, destURL, conf.LocalRoot, conf.RemoteRoot, srv.identity, conf.Background)
+			if err != nil {
 				slog.ErrorContext(runCtx, "error restoring connection", "name", conf.Name, "error", err)
 
 				errs <- err

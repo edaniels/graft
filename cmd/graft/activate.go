@@ -80,8 +80,7 @@ function _graft_resolve_connection () {
 }
 
 function _graft_precmd () {
-  # TODO(erd): Improve background execution to properly detach and suppress output.
-  (%[2]s report-cwd --pid=$GRAFT_SESSION `+"`pwd`"+` </dev/null &>/dev/null &)
+  %[2]s report-cwd --pid=$GRAFT_SESSION `+"`pwd`"+` </dev/null &>/dev/null
   _graft_resolve_connection
 }
 
@@ -153,8 +152,7 @@ _graft_resolve_connection () {
 _graft_precmd () {
   _graft_in_precmd=1
   _graft_preexec_fired=0
-  %[2]s report-cwd --pid=$GRAFT_SESSION $(pwd) </dev/null &>/dev/null &
-  disown
+  %[2]s report-cwd --pid=$GRAFT_SESSION $(pwd) </dev/null &>/dev/null
   _graft_resolve_connection
   _graft_in_precmd=0
 }
@@ -205,7 +203,7 @@ function _graft_preexec --on-event fish_preexec
 end
 
 function _graft_postcmd --on-event fish_postexec
-  %[2]s report-cwd --pid=$GRAFT_SESSION (pwd) </dev/null &>/dev/null &; disown
+  %[2]s report-cwd --pid=$GRAFT_SESSION (pwd) </dev/null &>/dev/null
 end
 
 function _graft_update_connection

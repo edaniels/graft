@@ -78,7 +78,7 @@ func NewServer(
 
 		dockerScheme, err := newDockerConnectorFactory(initializeContext)
 		if err != nil {
-			slog.ErrorContext(initializeContext, "docker not supported", "error", err)
+			slog.DebugContext(initializeContext, "docker not supported", "error", err)
 		} else {
 			connMgr.RegisterConnectorFactory(dockerSchemeName, dockerScheme)
 		}

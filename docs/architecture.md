@@ -98,7 +98,7 @@ In both cases the resulting `net.Conn` is wrapped into a `grpc.ClientConn` using
 
 ### Reconnection
 
-A health check runs every second. If the remote daemon becomes unreachable, the connection enters `Reconnecting` state and retries with exponential backoff (1s to 30s). Reconnection re-initializes the transport, checks the daemon, and reinstalls if the version has drifted.
+A health check runs every second. If the remote daemon becomes unreachable, or if initial connection failed (e.g. network not yet available at startup), the connection enters `Reconnecting` state and retries with exponential backoff (1s to 30s). Reconnection re-initializes the transport, checks the daemon, and reinstalls if the version has drifted.
 
 ## Connections
 
@@ -113,8 +113,8 @@ stateDiagram-v2
     Initializing --> Connected
     Initializing --> Failed
     Connected --> Reconnecting
+    Failed --> Reconnecting
     Reconnecting --> Connected
-    Reconnecting --> Failed
     Connected --> Closed
     Failed --> Closed
     Reconnecting --> Closed

@@ -300,6 +300,75 @@ func TestReconnectStateTransitions(t *testing.T) {
 	test.That(t, state, test.ShouldEqual, ConnectionStateConnected)
 }
 
+func newFailedTestDaemon(t *testing.T, connector *mockReconnectConnector) *remoteDaemon {
+	t.Helper()
+
+	d := newRemoteDaemon(connector)
+	d.runCtx = t.Context()
+	d.mu.Lock()
+	d.state = ConnectionStateFailed
+	d.mu.Unlock()
+
+	return d
+}
+
+func TestReconnectFromFailedState(t *testing.T) {
+	connector := &mockReconnectConnector{
+		destination: "test://host",
+		connectOK:   true,
+		oneShotOut:  "/home/test",
+	}
+	daemon := newFailedTestDaemon(t, connector)
+
+	state, _ := daemon.State()
+	test.That(t, state, test.ShouldEqual, ConnectionStateFailed)
+
+	result := daemon.Reconnect(t.Context())
+	test.That(t, result, test.ShouldBeTrue)
+
+	state, _ = daemon.State()
+	test.That(t, state, test.ShouldEqual, ConnectionStateConnected)
+}
+
+func TestCheckDaemonRetriesFailedConnection(t *testing.T) {
+	connector := &mockReconnectConnector{
+		destination: "test://host",
+		connectOK:   true,
+		oneShotOut:  "/home/test",
+	}
+	daemon := newFailedTestDaemon(t, connector)
+
+	mgr := &ConnectionManager{
+		daemons: map[string]*remoteDaemon{"test": daemon},
+	}
+
+	// checkDaemon should trigger reconnection for the Failed daemon.
+	mgr.checkDaemon(t.Context(), daemon)
+
+	// Wait for the async Reconnect goroutine to finish.
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			st, _ := daemon.State()
+			if st == ConnectionStateConnected {
+				close(done)
+
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for daemon to reconnect from Failed state")
+	}
+
+	state, _ := daemon.State()
+	test.That(t, state, test.ShouldEqual, ConnectionStateConnected)
+}
+
 func TestConnectionStateDerivedFromDaemon(t *testing.T) {
 	connector := &mockReconnectConnector{destination: "test://host"}
 	daemon := newTestDaemon(t, connector)

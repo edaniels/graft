@@ -533,6 +533,14 @@ func (mgr *ConnectionManager) checkAndLogDaemons(ctx context.Context) {
 
 func (mgr *ConnectionManager) checkDaemon(ctx context.Context, d *remoteDaemon) *graftv1.StatusResponse {
 	state, _ := d.State()
+	if state == ConnectionStateFailed {
+		slog.InfoContext(ctx, "retrying failed connection", "destination", d.Destination())
+
+		go d.Reconnect(d.runCtx)
+
+		return nil
+	}
+
 	if state != ConnectionStateConnected {
 		return nil
 	}

@@ -328,7 +328,7 @@ func TestConnectionByCWDSkipsBackground(t *testing.T) {
 	}
 	mgr.connections["bg"] = &Connection{name: "bg", localRoot: localRoot, background: true}
 
-	_, ok := mgr.connectionByCWD(context.Background(), subDir)
+	_, ok := mgr.matchConnectionByCWD(context.Background(), subDir)
 	test.That(t, ok, test.ShouldBeFalse)
 }
 
@@ -375,7 +375,7 @@ func TestConnectionByCWD(t *testing.T) {
 		}
 		mgr.connections["dev"] = &Connection{name: "dev", localRoot: localRoot}
 
-		conn, ok := mgr.connectionByCWD(context.Background(), subDir)
+		conn, ok := mgr.matchConnectionByCWD(context.Background(), subDir)
 		test.That(t, ok, test.ShouldBeTrue)
 		test.That(t, conn.Name(), test.ShouldEqual, "dev")
 	})
@@ -393,7 +393,7 @@ func TestConnectionByCWD(t *testing.T) {
 		mgr.connections["anvil"] = &Connection{name: "anvil", localRoot: projRoot}
 
 		// Both connections match projSubDir - should refuse to auto-select.
-		_, ok := mgr.connectionByCWD(context.Background(), projSubDir)
+		_, ok := mgr.matchConnectionByCWD(context.Background(), projSubDir)
 		test.That(t, ok, test.ShouldBeFalse)
 	})
 
@@ -406,7 +406,7 @@ func TestConnectionByCWD(t *testing.T) {
 		}
 		mgr.connections["dev"] = &Connection{name: "dev", localRoot: localRoot}
 
-		_, ok := mgr.connectionByCWD(context.Background(), otherDir)
+		_, ok := mgr.matchConnectionByCWD(context.Background(), otherDir)
 		test.That(t, ok, test.ShouldBeFalse)
 	})
 
@@ -416,7 +416,7 @@ func TestConnectionByCWD(t *testing.T) {
 		}
 		mgr.connections["dev"] = &Connection{name: "dev", localRoot: "/some/path"}
 
-		_, ok := mgr.connectionByCWD(context.Background(), "")
+		_, ok := mgr.matchConnectionByCWD(context.Background(), "")
 		test.That(t, ok, test.ShouldBeFalse)
 	})
 }

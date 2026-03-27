@@ -166,6 +166,11 @@ func (mgr *SessionManager) tickPruneSessions(runCtx context.Context) {
 // Note(erd): this feels like a critical section for the file system and in-memory state; maybe it
 // doesn't actually matter if the state of the system isn't updated atomically here?
 func (mgr *SessionManager) tickReconcileSession(runCtx context.Context, sess *Session) {
+	// Resolve the session's connection once, applying the full selection
+	// hierarchy (session pin -> CWD). This result is used both for shim
+	// gathering and for writing the current_connection file.
+	resolvedConn, _ := mgr.resolveSessionConnection(runCtx, sess)
+
 	// Collect existing shims into potential deletions.
 	var existingShimsToDelete map[string]struct{}
 
@@ -184,7 +189,7 @@ func (mgr *SessionManager) tickReconcileSession(runCtx context.Context, sess *Se
 		slog.DebugContext(runCtx, "error reading session directory", "error", err)
 	}
 
-	newForwardings, err := mgr.gatherDesiredShimsForSession(runCtx, sess)
+	newForwardings, err := mgr.gatherDesiredShimsForSession(runCtx, sess, resolvedConn)
 	if err != nil {
 		slog.DebugContext(runCtx, "error gathering desired shims for session", "error", err)
 
@@ -222,22 +227,10 @@ func (mgr *SessionManager) tickReconcileSession(runCtx context.Context, sess *Se
 
 	shimCommand(runCtx, shimPath, sudoCommandName)
 
-	// Update current connection file for shell prompt.
-	// Pinned connection takes precedence over CWD-based selection.
+	// Write the current_connection file for the shell prompt.
 	connName := ""
-
-	if pinned := sess.PinnedConnection(); pinned != "" {
-		if _, err := mgr.connMgr.Connection(pinned); err == nil {
-			connName = pinned
-		}
-	}
-
-	if connName == "" {
-		if cwd := sess.CWD(); cwd != "" {
-			if conn, ok := mgr.connMgr.ConnectionByCWD(runCtx, cwd); ok {
-				connName = conn.Name()
-			}
-		}
+	if resolvedConn != nil {
+		connName = resolvedConn.Name()
 	}
 
 	mgr.writeSessionConnectionFile(sess, connName)
@@ -258,10 +251,12 @@ func (mgr *SessionManager) writeSessionConnectionFile(sess *Session, connName st
 
 // gatherDesiredShimsForSession collects all available commands that a session could run based on established connections and
 // the session's desired state.
-func (mgr *SessionManager) gatherDesiredShimsForSession(runCtx context.Context, sess *Session) (map[string]ForwardedCommand, error) {
+func (mgr *SessionManager) gatherDesiredShimsForSession(
+	runCtx context.Context, sess *Session, selectedConn *Connection,
+) (map[string]ForwardedCommand, error) {
 	newForwardings := map[string]ForwardedCommand{}
 
-	for destination, toFwdIntents := range mgr.DesiredForwardingsForSession(runCtx, sess) {
+	for destination, toFwdIntents := range mgr.DesiredForwardingsForSession(runCtx, sess, selectedConn) {
 		conn, err := mgr.connMgr.Connection(destination)
 		if err != nil {
 			slog.DebugContext(runCtx, "cannot get connection for forwarding", "error", err)
@@ -367,13 +362,10 @@ func (i ForwardCommandIntent) LocalName(connName string) string {
 // tracked cwd to figure out what to forward.
 //
 // TODO(erd): but really, this needs some product design.
-func (mgr *SessionManager) DesiredForwardingsForSession(ctx context.Context, sess *Session) map[string][]ForwardCommandIntent {
-	// Connections
-	sess.sessMu.Lock()
-	cwd := sess.cwd
-	sess.sessMu.Unlock()
-
-	flatFwds := mgr.connMgr.forwardings(ctx, cwd)
+func (mgr *SessionManager) DesiredForwardingsForSession(
+	ctx context.Context, sess *Session, selectedConn *Connection,
+) map[string][]ForwardCommandIntent {
+	flatFwds := mgr.connMgr.forwardings(ctx, selectedConn)
 
 	// Session - Ephemeral
 	for sessDest, sessFwdList := range sess.DesiredForwardings() {
@@ -558,13 +550,24 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, 
 	slog.DebugContext(ctx, "lookup connection by cwd", "cwd", cwd)
 
 	if cwd != "" {
-		selectedConn, haveConn := mgr.connMgr.ConnectionByCWD(ctx, cwd)
+		selectedConn, haveConn := mgr.connMgr.connectionByCWD(ctx, cwd)
 		if haveConn {
 			return selectedConn, nil
 		}
 	}
 
 	return nil, errors.New("no connection to start a shell with by default")
+}
+
+// resolveSessionConnection returns the connection for a session, applying the
+// full selection hierarchy: session pin -> CWD-based auto-selection.
+func (mgr *SessionManager) resolveSessionConnection(ctx context.Context, sess *Session) (*Connection, bool) {
+	conn, err := mgr.selectConnection(ctx, sess, "", sess.CWD())
+	if err != nil {
+		return nil, false
+	}
+
+	return conn, true
 }
 
 func (mgr *SessionManager) selectConnectionForCommand(

@@ -97,7 +97,8 @@ func (srv *Server) SessionShimmedCommands(
 		return nil, err
 	}
 
-	fwdings := srv.sessMgr.DesiredForwardingsForSession(ctx, sess)
+	resolvedConn, _ := srv.sessMgr.resolveSessionConnection(ctx, sess)
+	fwdings := srv.sessMgr.DesiredForwardingsForSession(ctx, sess, resolvedConn)
 
 	destCommands := make(map[string]*graftv1.CommandForwardings, len(fwdings))
 

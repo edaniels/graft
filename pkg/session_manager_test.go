@@ -228,6 +228,99 @@ func TestTickReconcileSessionWithPin(t *testing.T) {
 	test.That(t, string(data), test.ShouldEqual, "connB")
 }
 
+func TestResolveSessionConnectionRespectsPin(t *testing.T) {
+	rootA := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"connA": newTestConnection("connA", rootA),
+		"connB": newTestConnection("connB", t.TempDir()),
+	})
+
+	pid := uint64(99985)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99985")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	// CWD inside rootA normally resolves to connA.
+	err := mgr.UpdateSessionCWD(ctx, pid, rootA)
+	test.That(t, err, test.ShouldBeNil)
+
+	sess, err := mgr.SessionByPID(pid)
+	test.That(t, err, test.ShouldBeNil)
+
+	conn, ok := mgr.resolveSessionConnection(ctx, sess)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, conn.Name(), test.ShouldEqual, "connA")
+
+	// Pin to connB - resolveSessionConnection should return connB.
+	sess.SetPinnedConnection("connB")
+
+	conn, ok = mgr.resolveSessionConnection(ctx, sess)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, conn.Name(), test.ShouldEqual, "connB")
+}
+
+func TestDesiredForwardingsForSessionRespectsPin(t *testing.T) {
+	rootA := t.TempDir()
+
+	connA := newTestConnection("connA", rootA)
+	connB := newTestConnection("connB", t.TempDir())
+
+	// Register a non-global forward on connB.
+	connB.UpdateForwardCommands([]ForwardCommandIntent{
+		{Name: "go", Prefix: false, Global: false},
+	})
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"connA": connA,
+		"connB": connB,
+	})
+
+	pid := uint64(99984)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99984")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	// CWD is inside rootA, so CWD-based resolution would pick connA.
+	err := mgr.UpdateSessionCWD(ctx, pid, rootA)
+	test.That(t, err, test.ShouldBeNil)
+
+	sess, err := mgr.SessionByPID(pid)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Pin to connB.
+	sess.SetPinnedConnection("connB")
+
+	// Resolve the session connection (respects pin).
+	resolvedConn, ok := mgr.resolveSessionConnection(ctx, sess)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, resolvedConn.Name(), test.ShouldEqual, "connB")
+
+	// DesiredForwardingsForSession should include connB's "go" forward
+	// because the session is pinned to connB, even though CWD is in rootA.
+	fwds := mgr.DesiredForwardingsForSession(ctx, sess, resolvedConn)
+	test.That(t, fwds, test.ShouldNotBeEmpty)
+
+	connBFwds := fwds["connB"]
+	test.That(t, connBFwds, test.ShouldNotBeNil)
+
+	var found bool
+
+	for _, intent := range connBFwds {
+		if intent.Name == "go" {
+			found = true
+
+			break
+		}
+	}
+
+	test.That(t, found, test.ShouldBeTrue)
+}
+
 func TestUpdateSessionCWDReconcileMultipleConnections(t *testing.T) {
 	wsRoot := t.TempDir()
 	projARoot := filepath.Join(wsRoot, "infra", "projectA")

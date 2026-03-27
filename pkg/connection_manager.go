@@ -700,14 +700,14 @@ func (mgr *ConnectionManager) RefreshConnectionRootsFile() {
 	mgr.writeConnectionRootsFile()
 }
 
-func (mgr *ConnectionManager) ConnectionByCWD(ctx context.Context, cwd string) (*Connection, bool) {
+func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string) (*Connection, bool) {
 	mgr.connMgrMu.Lock()
 	defer mgr.connMgrMu.Unlock()
 
-	return mgr.connectionByCWD(ctx, cwd)
+	return mgr.matchConnectionByCWD(ctx, cwd)
 }
 
-func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string) (*Connection, bool) {
+func (mgr *ConnectionManager) matchConnectionByCWD(ctx context.Context, cwd string) (*Connection, bool) {
 	if cwd == "" {
 		return nil, false
 	}
@@ -783,18 +783,16 @@ func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string) (
 	return nil, false
 }
 
-func (mgr *ConnectionManager) forwardings(ctx context.Context, cwd string) map[ForwardCommandIntent][]string {
+func (mgr *ConnectionManager) forwardings(_ context.Context, selectedConn *Connection) map[ForwardCommandIntent][]string {
 	mgr.connMgrMu.Lock()
 	defer mgr.connMgrMu.Unlock()
-
-	selectedConn, haveConn := mgr.connectionByCWD(ctx, cwd)
 
 	flatFwds := map[ForwardCommandIntent][]string{}
 
 	for destName, conn := range mgr.connections {
 		for _, fwd := range conn.ForwardIntents() {
 			// check if forwards are for this current session's connection
-			if !fwd.Global && (!haveConn || selectedConn != conn) {
+			if !fwd.Global && (selectedConn == nil || selectedConn != conn) {
 				continue
 			}
 

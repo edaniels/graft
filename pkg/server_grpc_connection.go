@@ -47,7 +47,7 @@ func (srv *Server) ListConnections(
 			return nil, err
 		}
 
-		selectedConn, haveConn = srv.connMgr.ConnectionByCWD(ctx, currSess.CWD())
+		selectedConn, haveConn = srv.sessMgr.resolveSessionConnection(ctx, currSess)
 	}
 
 	for _, conn := range connSnapshot {

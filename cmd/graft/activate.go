@@ -242,9 +242,10 @@ end
 }
 
 var activateCmd = &cobra.Command{
-	Use:   "activate <shell>",
-	Short: "Print shell activation script",
-	Args:  cobra.ExactArgs(1),
+	Use:       "activate <shell>",
+	Short:     "Print shell activation script",
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"bash", "zsh", "fish"},
 	RunE: func(_ *cobra.Command, args []string) error {
 		// TODO(erd): can look at https://github.com/jdx/mise/blob/3e382b34b6bf7d7b1a0efb8fdd8ea10c84498adb/src/shell/zsh.rs
 		// for inspiration from mise + direnv

@@ -17,6 +17,7 @@ var runCmd = &cobra.Command{
 	Use:                "run [-t <connection>] <command> [args...]",
 	Short:              "Run a command on a remote connection",
 	DisableFlagParsing: true,
+	ValidArgsFunction:  completeRunArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		to, cmdArgs, helpRequested, err := parseRunArgs(args)
 		if helpRequested {
@@ -40,6 +41,19 @@ var runCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(runCmd)
+}
+
+func completeRunArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	// Complete connection names after --to/-t.
+	if len(args) > 0 && (args[len(args)-1] == "--to" || args[len(args)-1] == "-t") {
+		return completeConnectionNames(cmd, args, toComplete)
+	}
+
+	if after, ok := strings.CutPrefix(toComplete, "--to="); ok {
+		return completeConnectionNames(cmd, args, after)
+	}
+
+	return nil, cobra.ShellCompDirectiveDefault
 }
 
 func parseRunArgs(args []string) (string, []string, bool, error) {

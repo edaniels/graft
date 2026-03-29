@@ -2,6 +2,8 @@ package graft
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
@@ -539,7 +541,7 @@ func (srv *Server) SyncFilesToConnection(
 
 	toRemote := req.GetDestDir()
 	if toRemote == "" {
-		toRemote = filepath.Join(conn.HomeDir(), filepath.Base(req.GetSourceDir()))
+		toRemote = defaultSyncRemotePath(conn.HomeDir(), srv.identity, req.GetSourceDir())
 	}
 
 	syncIntent := SynchronizationIntent{
@@ -561,6 +563,17 @@ func (srv *Server) SyncFilesToConnection(
 	}
 
 	return &graftv1.SyncFilesToConnectionResponse{}, nil
+}
+
+// defaultSyncRemotePath computes a unique default remote sync directory when the user
+// hasn't specified one. The path includes the local daemon identity (per-machine isolation)
+// and a short hash of the source directory (per-project isolation) to prevent collisions
+// when multiple machines or projects sync to the same remote host.
+func defaultSyncRemotePath(homeDir, identity, sourceDir string) string {
+	hash := sha256.Sum256([]byte(sourceDir))
+	shortHash := hex.EncodeToString(hash[:])[:6]
+
+	return filepath.Join(homeDir, ".graft", "sync", identity, filepath.Base(sourceDir)+"-"+shortHash)
 }
 
 // SyncFilesToConnectionProtocol is used for the underlying mutagen sync protocol that bypasses

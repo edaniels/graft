@@ -15,7 +15,8 @@ var useCmd = &cobra.Command{
 	Long: `Pin a connection to the current shell session, overriding CWD-based auto-selection.
 
 Use --clear to remove the pin and resume CWD-based selection.`,
-	Args: cobra.MaximumNArgs(1),
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completeConnectionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 && !useClear {
 			return cliExit("connection name required (or use --clear to unpin)", 1)

@@ -6,11 +6,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"time"
 
+	"github.com/spf13/cobra"
 	"google.golang.org/grpc/status"
 	"gopkg.in/yaml.v2"
 
 	"github.com/edaniels/graft/errors"
+	graftv1 "github.com/edaniels/graft/gen/proto/graft/v1"
 	graft "github.com/edaniels/graft/pkg"
 )
 
@@ -18,6 +22,36 @@ var logger = graft.NewLogger(slog.LevelError)
 
 func init() {
 	slog.SetDefault(logger)
+}
+
+func completeConnectionNames(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	sockPath, err := graft.DaemonSocketPathForCurrentHost(graft.ServerRoleLocal)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	clientConn, svcClient, _, err := graft.ConnectAndCheck(ctx, sockPath)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	defer clientConn.Close()
+
+	resp, err := svcClient.ListConnections(ctx, &graftv1.ListConnectionsRequest{})
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	names := make([]string, 0, len(resp.GetConnections()))
+	for name := range resp.GetConnections() {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
 type exitCodeError struct {

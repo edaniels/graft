@@ -22,6 +22,7 @@ var shellCmd = &cobra.Command{
 
 func init() {
 	shellCmd.Flags().StringVarP(&shellTo, "to", "t", "", "Target connection")
+	shellCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 
 	rootCmd.AddCommand(shellCmd)
 }

@@ -100,6 +100,7 @@ func init() {
 	errors.Unchecked(daemonCmd.Flags().MarkHidden("identity"))
 
 	daemonStatusCmd.Flags().StringVar(&daemonStatusConnection, "connection", "", "Connection to check status for")
+	daemonStatusCmd.RegisterFlagCompletionFunc("connection", completeConnectionNames) //nolint:errcheck
 
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonStopCmd)

@@ -80,9 +80,11 @@ var forwardWhichCmd = &cobra.Command{
 
 func init() {
 	forwardCmd.Flags().StringVarP(&forwardTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
+	forwardCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 	forwardCmd.Flags().BoolVar(&forwardPrefix, "prefix", false, "Forward with connection name prefix")
 
 	forwardRemoveCmd.Flags().StringVarP(&forwardRemoveTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
+	forwardRemoveCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 
 	forwardCmd.AddCommand(forwardListCmd)
 	forwardCmd.AddCommand(forwardRemoveCmd)

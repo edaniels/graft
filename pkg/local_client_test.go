@@ -18,7 +18,7 @@ import (
 func TestConnectAndCheckSocketMissing(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
 
-	conn, svc, ver, err := connectAndCheck(t.Context(), sockPath)
+	conn, svc, ver, err := ConnectAndCheck(t.Context(), sockPath)
 	test.That(t, errors.Is(err, ErrDaemonNotRunning), test.ShouldBeTrue)
 	test.That(t, conn, test.ShouldBeNil)
 	test.That(t, svc, test.ShouldBeNil)
@@ -35,7 +35,7 @@ func TestConnectAndCheckStaleSocket(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	f.Close()
 
-	conn, svc, ver, err := connectAndCheck(t.Context(), sockPath)
+	conn, svc, ver, err := ConnectAndCheck(t.Context(), sockPath)
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, conn, test.ShouldBeNil)
 	test.That(t, svc, test.ShouldBeNil)

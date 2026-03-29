@@ -41,6 +41,7 @@ func parseSyncArgs(args []string) string {
 
 func init() {
 	syncCmd.Flags().StringVarP(&syncTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
+	syncCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 	syncCmd.Flags().StringVar(&syncDestDir, "dest-dir", "", "Destination directory")
 
 	rootCmd.AddCommand(syncCmd)

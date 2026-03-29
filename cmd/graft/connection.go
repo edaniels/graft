@@ -19,6 +19,13 @@ var connectionSetRootCmd = &cobra.Command{
 	Use:   "set-root <connection> <local_dir> [remote_dir]",
 	Short: "Set the local (and optionally remote) root directory for a connection",
 	Args:  cobra.RangeArgs(2, 3),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return completeConnectionNames(cmd, args, toComplete)
+		}
+
+		return nil, cobra.ShellCompDirectiveDefault
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		connName := args[0]
 		localDir := args[1]

@@ -45,10 +45,10 @@ type LocalClient struct {
 // ErrDaemonNotRunning is returned when the daemon socket does not exist.
 var ErrDaemonNotRunning = errors.New("graft daemon is not running (start it with 'graft daemon')")
 
-// connectAndCheck dials the daemon socket and makes a Status health check. It returns the gRPC
+// ConnectAndCheck dials the daemon socket and makes a Status health check. It returns the gRPC
 // connection, service client, and the daemon's version info on success.
 // Returns ErrDaemonNotRunning if the socket does not exist.
-func connectAndCheck(
+func ConnectAndCheck(
 	ctx context.Context, sockPath string,
 ) (*grpc.ClientConn, graftv1.GraftServiceClient, *graftv1.VersionInfo, error) {
 	if _, err := os.Stat(sockPath); err != nil {
@@ -88,7 +88,7 @@ func WaitForDaemon(ctx context.Context, sockPath string) error {
 	const pollInterval = 250 * time.Millisecond
 
 	for {
-		conn, _, _, err := connectAndCheck(ctx, sockPath)
+		conn, _, _, err := ConnectAndCheck(ctx, sockPath)
 		if err == nil {
 			conn.Close()
 
@@ -122,7 +122,7 @@ func NewLocalClient(
 		return nil, nil, err
 	}
 
-	clientConn, svcClient, _, err := connectAndCheck(cancelCtx, sockPath)
+	clientConn, svcClient, _, err := ConnectAndCheck(cancelCtx, sockPath)
 	if err != nil {
 		cancel()
 

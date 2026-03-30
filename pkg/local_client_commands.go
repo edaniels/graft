@@ -16,6 +16,7 @@ import (
 
 	"github.com/fatih/color"
 	"golang.org/x/term"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/edaniels/graft/errors"
 	graftv1 "github.com/edaniels/graft/gen/proto/graft/v1"
@@ -126,6 +127,41 @@ func (client *LocalClient) PrintStatus(ctx context.Context) error {
 		}
 
 		fmt.Fprintln(client.errWriter)
+	}
+
+	return nil
+}
+
+// PrintStatusJSON prints the status of each connection as JSON to stdout.
+func (client *LocalClient) PrintStatusJSON(ctx context.Context) error {
+	req := &graftv1.ListConnectionsRequest{}
+
+	sessPID, sessPIDOk := client.sessionPID()
+	if sessPIDOk {
+		req.Pid = sessPID
+	}
+
+	resp, err := client.ListConnections(ctx, req)
+	if err != nil {
+		return client.handleError(err)
+	}
+
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames: true,
+	}
+
+	data, err := marshaler.Marshal(resp)
+	if err != nil {
+		return errors.WrapPrefix(err, "marshaling status to JSON")
+	}
+
+	_, err = client.outWriter.Write(data)
+	if err != nil {
+		return errors.WrapPrefix(err, "writing JSON output")
+	}
+
+	if _, err = client.outWriter.Write([]byte("\n")); err != nil {
+		return errors.WrapPrefix(err, "writing JSON newline")
 	}
 
 	return nil
@@ -512,8 +548,13 @@ func (client *LocalClient) RemoteShell(
 		return 0, client.handleError(err)
 	}
 
+	callerPID := uint64(os.Getppid()) //nolint:gosec // overflow okay
+	if sessPID, ok := client.sessionPID(); ok {
+		callerPID = sessPID
+	}
+
 	return client.runCommand(ctx, RunCommandOptions{
-		CallerPID:      uint64(os.Getppid()), //nolint:gosec // overflow okay
+		CallerPID:      callerPID,
 		CWD:            cwd,
 		MakeShell:      true,
 		ConnectionName: connectionName,

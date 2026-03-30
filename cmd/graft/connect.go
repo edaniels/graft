@@ -325,9 +325,10 @@ func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectPar
 }
 
 var disconnectCmd = &cobra.Command{
-	Use:   "disconnect <connection>",
-	Short: "Disconnect from a remote connection",
-	Args:  cobra.ExactArgs(1),
+	Use:               "disconnect <connection>",
+	Short:             "Disconnect from a remote connection",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeConnectionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, ctx := newClient(cmd.Context(), true)
 		defer client.Close()

@@ -108,7 +108,10 @@ just-lint:
 actions-lint:
     actionlint
 
-lint: protos-lint just-lint actions-lint go-lint
+editors-lint:
+    cd editors/vscode && npm install --silent && npm run compile
+
+lint: protos-lint just-lint actions-lint go-lint editors-lint
 
 ci-lint:
     just lint
@@ -125,15 +128,13 @@ update-deps:
     go get -u ./...
     go mod tidy
 
-# Build the macOS menu bar status app
-menubar:
-    @mkdir -p {{ BIN_DIR }}
-    swiftc -framework Cocoa -o {{ BIN_DIR }}/GraftStatus extras/menubar/GraftStatus.swift
-
-# Install the menubar binary alongside graft
-install-menubar: menubar
-    cp {{ BIN_DIR }}/GraftStatus "$HOME/go/bin/GraftStatus"
-
 # Release to GitHub
 release version:
     ./scripts/release.sh "{{ version }}"
+
+# Publish VS Code/Cursor extension (bump: patch, minor, or major)
+release-extension bump="patch":
+    cd editors/vscode && npm install && npm run compile
+    cd editors/vscode && npm version {{ bump }} --no-git-tag-version
+    cd editors/vscode && npx @vscode/vsce publish -p "$VSCE_PAT"
+    cd editors/vscode && npx ovsx publish -p "$OVSX_PAT"

@@ -43,6 +43,63 @@ func TestCheckForUpdate(t *testing.T) {
 		test.That(t, result.UpdateAvailable, test.ShouldBeFalse)
 		test.That(t, result.IsDevBuild, test.ShouldBeTrue)
 	})
+
+	t.Run("includes release notes when update available", func(t *testing.T) {
+		client := &fakeReleaseClient{
+			latestVersion: "v2.0.0",
+			releaseNotes:  "- Fixed bug\n- Added feature",
+		}
+
+		result, err := CheckForUpdate(t.Context(), client, "v1.0.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, result.UpdateAvailable, test.ShouldBeTrue)
+		test.That(t, result.ReleaseNotes, test.ShouldEqual, "- Fixed bug\n- Added feature")
+	})
+
+	t.Run("no release notes when up to date", func(t *testing.T) {
+		client := &fakeReleaseClient{
+			latestVersion: "v1.0.0",
+			releaseNotes:  "- Fixed bug",
+		}
+
+		result, err := CheckForUpdate(t.Context(), client, "v1.0.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, result.ReleaseNotes, test.ShouldBeEmpty)
+	})
+
+	t.Run("release notes error degrades gracefully", func(t *testing.T) {
+		client := &fakeReleaseClient{
+			latestVersion:   "v2.0.0",
+			releaseNotesErr: errors.New("network error"),
+		}
+
+		result, err := CheckForUpdate(t.Context(), client, "v1.0.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, result.UpdateAvailable, test.ShouldBeTrue)
+		test.That(t, result.ReleaseNotes, test.ShouldBeEmpty)
+	})
+}
+
+func TestReleaseNotesLines(t *testing.T) {
+	t.Run("multi-line", func(t *testing.T) {
+		lines := ReleaseNotesLines("- Fixed bug\n- Added feature")
+		test.That(t, lines, test.ShouldResemble, []string{"- Fixed bug", "- Added feature"})
+	})
+
+	t.Run("trims trailing empty lines", func(t *testing.T) {
+		lines := ReleaseNotesLines("- Fixed bug\n\n\n")
+		test.That(t, lines, test.ShouldResemble, []string{"- Fixed bug"})
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		lines := ReleaseNotesLines("")
+		test.That(t, lines, test.ShouldBeNil)
+	})
+
+	t.Run("single line", func(t *testing.T) {
+		lines := ReleaseNotesLines("Just a note")
+		test.That(t, lines, test.ShouldResemble, []string{"Just a note"})
+	})
 }
 
 func TestDownloadAndVerify(t *testing.T) {
@@ -363,9 +420,11 @@ func TestReleaseClientFromConfig(t *testing.T) {
 
 // fakeReleaseClient implements ReleaseClient for testing.
 type fakeReleaseClient struct {
-	latestVersion string
-	objects       map[string][]byte
-	latestErr     error
+	latestVersion   string
+	objects         map[string][]byte
+	latestErr       error
+	releaseNotes    string
+	releaseNotesErr error
 }
 
 func (f *fakeReleaseClient) LatestVersion(_ context.Context) (string, error) {
@@ -400,4 +459,8 @@ func (f *fakeReleaseClient) DownloadBinary(_ context.Context, version, binaryNam
 	}
 
 	return nil
+}
+
+func (f *fakeReleaseClient) ReleaseNotes(_ context.Context, _ string) (string, error) {
+	return f.releaseNotes, f.releaseNotesErr
 }

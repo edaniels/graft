@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"sync"
 
 	"github.com/google/go-github/v84/github"
 
@@ -29,9 +28,6 @@ func GithubToken() string {
 // GitHubReleaseClient implements ReleaseClient using the GitHub Releases API.
 type GitHubReleaseClient struct {
 	client *github.Client
-
-	mu             sync.Mutex
-	cachedReleases map[string]*github.RepositoryRelease
 }
 
 // NewGitHubReleaseClient creates a ReleaseClient backed by GitHub Releases.
@@ -43,10 +39,7 @@ func NewGitHubReleaseClient(token string) *GitHubReleaseClient {
 		client = github.NewClient(nil)
 	}
 
-	return &GitHubReleaseClient{
-		client:         client,
-		cachedReleases: make(map[string]*github.RepositoryRelease),
-	}
+	return &GitHubReleaseClient{client: client}
 }
 
 // LatestVersion fetches the latest release tag from GitHub.
@@ -56,13 +49,7 @@ func (g *GitHubReleaseClient) LatestVersion(ctx context.Context) (string, error)
 		return "", errors.WrapPrefix(err, "fetching latest release")
 	}
 
-	version := release.GetTagName()
-
-	g.mu.Lock()
-	g.cachedReleases[version] = release
-	g.mu.Unlock()
-
-	return version, nil
+	return release.GetTagName(), nil
 }
 
 // DownloadChecksums downloads the checksums.txt asset for the given version.
@@ -104,25 +91,20 @@ func (g *GitHubReleaseClient) DownloadBinary(ctx context.Context, version, binar
 	return nil
 }
 
-func (g *GitHubReleaseClient) releaseForVersion(ctx context.Context, version string) (*github.RepositoryRelease, error) {
-	g.mu.Lock()
-
-	if r, ok := g.cachedReleases[version]; ok {
-		g.mu.Unlock()
-
-		return r, nil
+func (g *GitHubReleaseClient) ReleaseNotes(ctx context.Context, version string) (string, error) {
+	release, err := g.releaseForVersion(ctx, version)
+	if err != nil {
+		return "", err
 	}
 
-	g.mu.Unlock()
+	return release.GetBody(), nil
+}
 
+func (g *GitHubReleaseClient) releaseForVersion(ctx context.Context, version string) (*github.RepositoryRelease, error) {
 	release, _, err := g.client.Repositories.GetReleaseByTag(ctx, updateRepoOwner, updateRepoName, version)
 	if err != nil {
 		return nil, errors.WrapPrefix(err, "fetching release")
 	}
-
-	g.mu.Lock()
-	g.cachedReleases[version] = release
-	g.mu.Unlock()
 
 	return release, nil
 }

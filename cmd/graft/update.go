@@ -57,6 +57,16 @@ func runUpdate(ctx context.Context) error {
 
 	fmt.Fprintf(os.Stderr, "New version available: %s\n", color.GreenString(result.LatestVersion))
 
+	if result.ReleaseNotes != "" {
+		fmt.Fprintf(os.Stderr, "\nRelease notes:\n")
+
+		for _, line := range graft.ReleaseNotesLines(result.ReleaseNotes) {
+			fmt.Fprintf(os.Stderr, "  %s\n", line)
+		}
+
+		fmt.Fprintln(os.Stderr)
+	}
+
 	if updateCheck {
 		fmt.Fprintf(os.Stderr, "Run 'graft update' to install it.\n")
 

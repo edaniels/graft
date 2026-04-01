@@ -394,7 +394,7 @@ func checkForUpdateInBackground(ctx context.Context, logger *slog.Logger) {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	client := graft.NewGitHubReleaseClient(graft.GithubToken())
+	client := graft.ReleaseClientFromConfig()
 
 	result, err := graft.CheckForUpdate(checkCtx, client, graft.VersionString())
 	if err != nil {

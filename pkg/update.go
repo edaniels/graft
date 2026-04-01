@@ -17,6 +17,29 @@ import (
 	"github.com/edaniels/graft/errors"
 )
 
+// defaultUpdateURL is optionally set at build time via ldflags to bake in
+// an alternative update source (e.g. an S3 bucket). When set, binaries
+// automatically check this URL for updates instead of GitHub Releases.
+//
+//nolint:gochecknoglobals
+var defaultUpdateURL string
+
+// ReleaseClientFromConfig returns the appropriate ReleaseClient based on
+// configuration. Priority: GRAFT_UPDATE_URL env var > build-time default > GitHub.
+func ReleaseClientFromConfig() ReleaseClient {
+	if u := os.Getenv("GRAFT_UPDATE_URL"); u != "" {
+		return NewHTTPSReleaseClient(u)
+	}
+
+	if defaultUpdateURL != "" {
+		return NewHTTPSReleaseClient(defaultUpdateURL)
+	}
+
+	return NewGitHubReleaseClient(GithubToken())
+}
+
+const maxReleaseDownloadSize = 256 << 20 // 256 MB
+
 // ReleaseClient abstracts how release artifacts are fetched, allowing
 // both GitHub Releases and plain HTTPS servers to share the same
 // update-check and download-and-verify logic.

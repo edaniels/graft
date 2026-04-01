@@ -127,8 +127,6 @@ func (g *GitHubReleaseClient) releaseForVersion(ctx context.Context, version str
 	return release, nil
 }
 
-const maxAssetDownloadSize = 256 << 20 // 256 MB
-
 func (g *GitHubReleaseClient) downloadAsset(ctx context.Context, assetID int64) ([]byte, error) {
 	rc, _, err := g.client.Repositories.DownloadReleaseAsset(ctx,
 		updateRepoOwner, updateRepoName, assetID, g.client.Client())
@@ -137,13 +135,13 @@ func (g *GitHubReleaseClient) downloadAsset(ctx context.Context, assetID int64) 
 	}
 	defer rc.Close()
 
-	data, err := io.ReadAll(io.LimitReader(rc, maxAssetDownloadSize+1))
+	data, err := io.ReadAll(io.LimitReader(rc, maxReleaseDownloadSize+1))
 	if err != nil {
 		return nil, errors.Wrap(err)
 	}
 
-	if int64(len(data)) > maxAssetDownloadSize {
-		return nil, errors.Errorf("asset too large (>%d bytes)", maxAssetDownloadSize)
+	if int64(len(data)) > maxReleaseDownloadSize {
+		return nil, errors.Errorf("asset too large (>%d bytes)", maxReleaseDownloadSize)
 	}
 
 	return data, nil

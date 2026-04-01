@@ -34,7 +34,7 @@ func runUpdate(ctx context.Context) error {
 	}
 	defer lock.Close()
 
-	client := graft.NewGitHubReleaseClient(graft.GithubToken())
+	client := graft.ReleaseClientFromConfig()
 
 	currentVersion := graft.VersionString()
 	fmt.Fprintf(os.Stderr, "Current version: %s\n", currentVersion)

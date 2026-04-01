@@ -316,6 +316,51 @@ func TestAcquireUpdateLock(t *testing.T) {
 	})
 }
 
+func TestReleaseClientFromConfig(t *testing.T) {
+	t.Run("env var returns HTTPS client", func(t *testing.T) {
+		t.Setenv("GRAFT_UPDATE_URL", "https://example.com/releases")
+
+		client := ReleaseClientFromConfig()
+		_, ok := client.(*HTTPSReleaseClient)
+		test.That(t, ok, test.ShouldBeTrue)
+	})
+
+	t.Run("no env var returns GitHub client", func(t *testing.T) {
+		t.Setenv("GRAFT_UPDATE_URL", "")
+
+		client := ReleaseClientFromConfig()
+		_, ok := client.(*GitHubReleaseClient)
+		test.That(t, ok, test.ShouldBeTrue)
+	})
+
+	t.Run("build-time default used when no env var", func(t *testing.T) {
+		t.Setenv("GRAFT_UPDATE_URL", "")
+
+		old := defaultUpdateURL
+		defaultUpdateURL = "https://build-time.example.com/releases"
+
+		t.Cleanup(func() { defaultUpdateURL = old })
+
+		client := ReleaseClientFromConfig()
+		_, ok := client.(*HTTPSReleaseClient)
+		test.That(t, ok, test.ShouldBeTrue)
+	})
+
+	t.Run("env var overrides build-time default", func(t *testing.T) {
+		t.Setenv("GRAFT_UPDATE_URL", "https://override.example.com/releases")
+
+		old := defaultUpdateURL
+		defaultUpdateURL = "https://build-time.example.com/releases"
+
+		t.Cleanup(func() { defaultUpdateURL = old })
+
+		client := ReleaseClientFromConfig()
+		httpsClient, ok := client.(*HTTPSReleaseClient)
+		test.That(t, ok, test.ShouldBeTrue)
+		test.That(t, httpsClient.baseURL, test.ShouldEqual, "https://override.example.com/releases")
+	})
+}
+
 // fakeReleaseClient implements ReleaseClient for testing.
 type fakeReleaseClient struct {
 	latestVersion string

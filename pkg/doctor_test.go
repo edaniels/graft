@@ -93,6 +93,18 @@ func TestDoctorCheckUpdates(t *testing.T) {
 		result := CheckUpdates(context.Background(), &fakeReleaseClient{latestVersion: "v2.0.0"}, "v1.0.0")
 		test.That(t, result.Status, test.ShouldEqual, CheckWarn)
 		test.That(t, result.Message, test.ShouldContainSubstring, "v2.0.0")
+		test.That(t, result.Details, test.ShouldBeNil)
+	})
+
+	t.Run("update available with release notes", func(t *testing.T) {
+		client := &fakeReleaseClient{
+			latestVersion: "v2.0.0",
+			releaseNotes:  "- Fixed bug\n- Added feature",
+		}
+		result := CheckUpdates(context.Background(), client, "v1.0.0")
+		test.That(t, result.Status, test.ShouldEqual, CheckWarn)
+		test.That(t, result.Message, test.ShouldContainSubstring, "v2.0.0")
+		test.That(t, result.Details, test.ShouldResemble, []string{"- Fixed bug", "- Added feature"})
 	})
 
 	t.Run("dev build", func(t *testing.T) {

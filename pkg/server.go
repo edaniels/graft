@@ -63,10 +63,6 @@ func NewServer(
 	buffLineWriter *BufferedLineWriter,
 	identity string,
 ) (*Server, error) {
-	// Only try initializing for a limited time.
-	initializeContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
 	var (
 		connMgr *ConnectionManager
 		sessMgr *SessionManager
@@ -76,14 +72,11 @@ func NewServer(
 	case ServerRoleLocal:
 		connMgr = NewConnectionManager()
 
-		dockerScheme, err := newDockerConnectorFactory(initializeContext)
-		if err != nil {
-			slog.DebugContext(initializeContext, "docker not supported", "error", err)
-		} else {
-			connMgr.RegisterConnectorFactory(dockerSchemeName, dockerScheme)
-		}
+		connMgr.RegisterConnectorFactory(dockerSchemeName, newDockerConnectorFactory())
 
 		connMgr.RegisterConnectorFactory(sshSchemeName, newSSHConnectorFactory())
+
+		var err error
 
 		sessMgr, err = NewSessionManager(connMgr)
 		if err != nil {

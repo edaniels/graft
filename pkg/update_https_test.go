@@ -171,6 +171,49 @@ func TestHTTPSReleaseClientDownloadAndVerify(t *testing.T) {
 	})
 }
 
+func TestHTTPSReleaseClientReleaseNotes(t *testing.T) {
+	t.Run("returns release notes", func(t *testing.T) {
+		client := newTestHTTPSServer(t, map[string][]byte{
+			"/v1.0.0/release-notes.txt": []byte("- Fixed bug\n- Added feature\n"),
+		})
+
+		notes, err := client.ReleaseNotes(t.Context(), "v1.0.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, notes, test.ShouldEqual, "- Fixed bug\n- Added feature")
+	})
+
+	t.Run("error on 404", func(t *testing.T) {
+		client := newTestHTTPSServer(t, map[string][]byte{})
+
+		_, err := client.ReleaseNotes(t.Context(), "v1.0.0")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "404")
+	})
+
+	t.Run("error on 500", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}))
+		t.Cleanup(server.Close)
+
+		client := NewHTTPSReleaseClient(server.URL)
+
+		_, err := client.ReleaseNotes(t.Context(), "v1.0.0")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "500")
+	})
+
+	t.Run("trims whitespace", func(t *testing.T) {
+		client := newTestHTTPSServer(t, map[string][]byte{
+			"/v1.0.0/release-notes.txt": []byte("  - Fixed bug  \n\n"),
+		})
+
+		notes, err := client.ReleaseNotes(t.Context(), "v1.0.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, notes, test.ShouldEqual, "- Fixed bug")
+	})
+}
+
 func TestHTTPSReleaseClientCheckForUpdate(t *testing.T) {
 	t.Run("update available", func(t *testing.T) {
 		client := newTestHTTPSServer(t, map[string][]byte{

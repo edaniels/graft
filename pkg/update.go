@@ -52,6 +52,10 @@ type ReleaseClient interface {
 
 	// DownloadBinary downloads the release binary to destPath.
 	DownloadBinary(ctx context.Context, version, binaryName, destPath string) error
+
+	// ReleaseNotes returns the release notes for the given version.
+	// Returns ("", nil) when notes are not available.
+	ReleaseNotes(ctx context.Context, version string) (string, error)
 }
 
 // UpdateCheckResult is returned by CheckForUpdate.
@@ -60,6 +64,7 @@ type UpdateCheckResult struct {
 	LatestVersion   string
 	UpdateAvailable bool
 	IsDevBuild      bool // true when current version is not a valid semver release
+	ReleaseNotes    string
 }
 
 // CheckForUpdate queries a ReleaseClient for a newer version.
@@ -83,11 +88,23 @@ func CheckForUpdate(ctx context.Context, client ReleaseClient, currentVersion st
 		"latest_version", latestVersion, "current_version", currentVersion,
 		"update_available", updateAvailable, "is_dev_build", isDevBuild)
 
+	var releaseNotes string
+
+	if updateAvailable {
+		notes, notesErr := client.ReleaseNotes(ctx, latestVersion)
+		if notesErr != nil {
+			slog.DebugContext(ctx, "failed to fetch release notes", "error", notesErr)
+		} else {
+			releaseNotes = notes
+		}
+	}
+
 	return &UpdateCheckResult{
 		CurrentVersion:  currentVersion,
 		LatestVersion:   latestVersion,
 		UpdateAvailable: updateAvailable,
 		IsDevBuild:      isDevBuild,
+		ReleaseNotes:    releaseNotes,
 	}, nil
 }
 
@@ -220,6 +237,16 @@ func ReplaceBinary(tmpPath, targetPath string) error {
 	}
 
 	return nil
+}
+
+// ReleaseNotesLines splits release notes into lines suitable for display,
+// trimming trailing empty lines.
+func ReleaseNotesLines(notes string) []string {
+	if notes == "" {
+		return nil
+	}
+
+	return strings.Split(strings.TrimRight(notes, "\n"), "\n")
 }
 
 // versionNewerThan returns true if candidate is a newer stable semver than current.

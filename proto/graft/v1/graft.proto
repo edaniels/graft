@@ -127,6 +127,13 @@ service GraftService {
   // message identifying the target; subsequent messages carry raw payload bytes.
   rpc ForwardPort(stream ForwardPortRequest) returns (stream ForwardPortResponse) {}
 
+  // AddPortForwards adds explicit port forwards to a connection. Explicit port forwards
+  // are not affected by auto-detection lifecycle; they persist until explicitly removed.
+  rpc AddPortForwards(AddPortForwardsRequest) returns (AddPortForwardsResponse) {}
+
+  // RemovePortForwards removes explicit port forwards from a connection.
+  rpc RemovePortForwards(RemovePortForwardsRequest) returns (RemovePortForwardsResponse) {}
+
   //
   // Session commands
   //
@@ -515,6 +522,30 @@ message SessionPinConnectionResponse {
   string connection_name = 1;
 }
 
+// ExplicitPortForwardSpec describes a user-requested port forward.
+message ExplicitPortForwardSpec {
+  uint32 remote_port = 1;
+  uint32 local_port = 2; // 0 means same as remote_port
+  string protocol = 3; // "tcp" or "udp"
+}
+
+message AddPortForwardsRequest {
+  string connection_name = 1;
+  repeated ExplicitPortForwardSpec ports = 2;
+}
+
+message AddPortForwardsResponse {}
+
+message RemovePortForwardsRequest {
+  string connection_name = 1;
+  repeated ExplicitPortForwardSpec ports = 2;
+}
+
+message RemovePortForwardsResponse {
+  // Ports that were only auto-detected (not explicitly forwarded) and thus not removed.
+  repeated ExplicitPortForwardSpec auto_detected_ports = 1;
+}
+
 // PortForwardStatus is the status of a single port forward, shown in `graft status`.
 message PortForwardStatus {
   uint32 remote_port = 1;
@@ -522,4 +553,5 @@ message PortForwardStatus {
   string protocol = 3; // "tcp" or "udp"
   bool conflict = 4;
   string conflict_reason = 5;
+  bool explicit = 6; // true if user-requested, false if auto-detected
 }

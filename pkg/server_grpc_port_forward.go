@@ -1,10 +1,12 @@
 package graft
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -218,7 +220,7 @@ func relayBidi(stream graftv1.GraftService_ForwardPortServer, conn net.Conn) err
 	err1 := <-errCh
 	if err1 != nil {
 		// Error: close conn to unblock the Read goroutine promptly. This is not
-		// redundant with the deferred conn.Close() in ForwardPort - it ensures the
+		// redundant with the deferred conn.Close() in ForwardPort; it ensures the
 		// goroutine makes progress immediately rather than waiting for gRPC teardown.
 		// Returning causes ForwardPort to return, tearing down the stream and
 		// unblocking any goroutine stuck on stream.Recv.
@@ -242,4 +244,101 @@ func relayBidi(stream graftv1.GraftService_ForwardPortServer, conn net.Conn) err
 	err2 := <-errCh
 
 	return err2
+}
+
+// AddPortForwards adds explicit port forwards to a connection.
+func (srv *Server) AddPortForwards(
+	ctx context.Context,
+	req *graftv1.AddPortForwardsRequest,
+) (*graftv1.AddPortForwardsResponse, error) {
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	daemon := conn.lockedDaemon()
+
+	// Add each forward and collect spec strings for config persistence.
+	specStrs := make([]string, 0, len(req.GetPorts()))
+
+	for _, p := range req.GetPorts() {
+		spec := PortForwardSpecFromProto(p)
+
+		if err := daemon.AddExplicitPortForward(ctx, spec); err != nil {
+			return nil, err
+		}
+
+		specStrs = append(specStrs, spec.String())
+	}
+
+	for idx, connConfig := range srv.rootConfig.Connections {
+		if connConfig.Name == conn.Name() {
+			for _, specStr := range specStrs {
+				if !slices.Contains(connConfig.Ports, specStr) {
+					connConfig.Ports = append(connConfig.Ports, specStr)
+				}
+			}
+
+			srv.rootConfig.Connections[idx] = connConfig
+
+			break
+		}
+	}
+
+	srv.persistConfig()
+
+	return &graftv1.AddPortForwardsResponse{}, nil
+}
+
+// RemovePortForwards removes explicit port forwards from a connection.
+func (srv *Server) RemovePortForwards(
+	_ context.Context,
+	req *graftv1.RemovePortForwardsRequest,
+) (*graftv1.RemovePortForwardsResponse, error) {
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	daemon := conn.lockedDaemon()
+
+	var autoDetected []*graftv1.ExplicitPortForwardSpec
+
+	toRemove := make(map[string]struct{}, len(req.GetPorts()))
+
+	for _, p := range req.GetPorts() {
+		spec := PortForwardSpecFromProto(p)
+
+		if !daemon.RemoveExplicitPortForward(spec) {
+			autoDetected = append(autoDetected, p)
+		}
+
+		toRemove[spec.String()] = struct{}{}
+	}
+
+	for idx, connConfig := range srv.rootConfig.Connections {
+		if connConfig.Name == conn.Name() {
+			connConfig.Ports = slices.DeleteFunc(connConfig.Ports, func(s string) bool {
+				_, remove := toRemove[s]
+
+				return remove
+			})
+
+			srv.rootConfig.Connections[idx] = connConfig
+
+			break
+		}
+	}
+
+	srv.persistConfig()
+
+	return &graftv1.RemovePortForwardsResponse{
+		AutoDetectedPorts: autoDetected,
+	}, nil
 }

@@ -90,7 +90,7 @@ func printResult(r graft.CheckResult) {
 }
 
 func checkForUpdates(ctx context.Context) graft.CheckResult {
-	client := graft.NewGitHubReleaseClient(graft.GithubToken())
+	client := graft.ReleaseClientFromConfig()
 
 	return graft.CheckUpdates(ctx, client, graft.VersionString())
 }

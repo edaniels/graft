@@ -10,9 +10,12 @@ BIN_DIR := justfile_directory() / 'bin'
 EMBED_DIR := justfile_directory() / 'pkg' / 'embedded' / 'binaries'
 DAEMON_NAME := 'graft'
 BUILD_VERSION := env('BUILD_VERSION', '')
+BUILD_UPDATE_URL := env('BUILD_UPDATE_URL', '')
 [private]
 _LD_BUILD_VERSION := if BUILD_VERSION != "" { " -X github.com/edaniels/graft/pkg.buildVersion=" + BUILD_VERSION } else { "" }
-LD_FLAGS := '-ldflags "-w -s' + _LD_BUILD_VERSION + '"'
+[private]
+_LD_BUILD_UPDATE_URL := if BUILD_UPDATE_URL != "" { " -X github.com/edaniels/graft/pkg.defaultUpdateURL=" + BUILD_UPDATE_URL } else { "" }
+LD_FLAGS := '-ldflags "-w -s' + _LD_BUILD_VERSION + _LD_BUILD_UPDATE_URL + '"'
 GO_ENV_FLAGS := "CGO_ENABLED=0 GOBIN=$HOME/go/bin"
 GO_BUILD_FLAGS := '-trimpath ' + if env('RACE', 'false') == "true" { "-race" } else { "" }
 PLATFORMS := "linux-amd64 linux-arm64 darwin-arm64"

@@ -28,77 +28,109 @@ import (
 const dockerSchemeName = "docker"
 
 type dockerConnectorFactory struct {
+	initOnce     sync.Once
 	dockerClient *client.Client
+	initErr      error
 }
 
 var errUnsupportedDockerPlatform = errors.NewBare("do not know how to start docker on platform")
 
-// newDockerConnectorFactory sets up the connection factory for docker based connections. It ensures the docker engine
-// is running with a connection to it before returning. It errors if the client/server connection to the docker daemon
-// cannot be established.
-func newDockerConnectorFactory(initCtx context.Context) (ConnectorFactory, error) {
+// newDockerConnectorFactory returns a ConnectorFactory for docker connections. The factory is lazy -
+// it does not attempt to connect to or start Docker until the first CreateConnector call.
+func newDockerConnectorFactory() ConnectorFactory {
+	return &dockerConnectorFactory{}
+}
+
+// ensureDockerRunning initializes the docker client and ensures the docker engine is running,
+// starting it if necessary. It is called lazily on the first CreateConnector call.
+func (s *dockerConnectorFactory) ensureDockerRunning(ctx context.Context) error {
+	s.initOnce.Do(func() {
+		s.dockerClient, s.initErr = initDockerClient(ctx)
+	})
+
+	return s.initErr
+}
+
+// initDockerClient creates a docker client and ensures the engine is reachable,
+// starting it if necessary on supported platforms.
+func initDockerClient(ctx context.Context) (*client.Client, error) {
 	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
-		slog.ErrorContext(initCtx, "error creating new client", "error", err)
+		slog.ErrorContext(ctx, "error creating new client", "error", err)
 
 		return nil, errors.Wrap(err)
 	}
 
-	_, infoErr := dockerClient.Info(initCtx, client.InfoOptions{})
-	if infoErr != nil {
-		if !client.IsErrConnectionFailed(infoErr) {
-			return nil, errors.Wrap(infoErr)
-		}
-
-		slog.InfoContext(initCtx, "trying to start docker")
-
-		switch runtime.GOOS {
-		case osDarwin:
-			ticker := time.NewTicker(time.Second)
-			defer ticker.Stop()
-
-			for {
-				if context.Cause(initCtx) != nil {
-					return nil, errors.Join(infoErr, context.Cause(initCtx))
-				}
-
-				output, err := exec.CommandContext(initCtx, "open", "-j", "-a", "Docker").CombinedOutput()
-				if err != nil {
-					return nil, errors.Wrap(err)
-				}
-
-				if len(output) != 0 {
-					slog.DebugContext(initCtx, "open Docker output", "output", string(output))
-				}
-
-				select {
-				case <-initCtx.Done():
-					return nil, errors.Join(infoErr, context.Cause(initCtx))
-				case <-ticker.C:
-				}
-
-				if _, infoErr = dockerClient.Info(initCtx, client.InfoOptions{}); infoErr == nil {
-					break
-				}
-
-				slog.DebugContext(initCtx, "cannot connect to docker yet", "error", infoErr)
-			}
-		default:
-			return nil, errors.WrapSuffix(errUnsupportedDockerPlatform, runtime.GOOS)
-		}
+	_, infoErr := dockerClient.Info(ctx, client.InfoOptions{})
+	if infoErr == nil {
+		return dockerClient, nil
 	}
 
-	return &dockerConnectorFactory{
-		dockerClient: dockerClient,
-	}, nil
+	if !client.IsErrConnectionFailed(infoErr) {
+		return nil, errors.Wrap(infoErr)
+	}
+
+	if err := startDockerEngine(ctx, dockerClient); err != nil {
+		return nil, err
+	}
+
+	return dockerClient, nil
+}
+
+// startDockerEngine attempts to start the docker engine and waits for it to become reachable.
+func startDockerEngine(ctx context.Context, dockerClient *client.Client) error {
+	slog.InfoContext(ctx, "trying to start docker")
+
+	switch runtime.GOOS {
+	case osDarwin:
+		return startDockerDarwin(ctx, dockerClient)
+	default:
+		return errors.WrapSuffix(errUnsupportedDockerPlatform, runtime.GOOS)
+	}
+}
+
+func startDockerDarwin(ctx context.Context, dockerClient *client.Client) error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		if context.Cause(ctx) != nil {
+			return errors.Wrap(context.Cause(ctx))
+		}
+
+		output, err := exec.CommandContext(ctx, "open", "-j", "-a", "Docker").CombinedOutput()
+		if err != nil {
+			return errors.Wrap(err)
+		}
+
+		if len(output) != 0 {
+			slog.DebugContext(ctx, "open Docker output", "output", string(output))
+		}
+
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(context.Cause(ctx))
+		case <-ticker.C:
+		}
+
+		if _, infoErr := dockerClient.Info(ctx, client.InfoOptions{}); infoErr == nil {
+			return nil
+		}
+
+		slog.DebugContext(ctx, "cannot connect to docker yet")
+	}
 }
 
 // CreateConnector sets up an uninitialized connector for docker. The intended image is not validated
 // for existence at this stage. The container name is extracted from the destURL "containerName"
-// query parameter.
-func (s dockerConnectorFactory) CreateConnector(
-	_ context.Context, destURL *url.URL, identity string,
+// query parameter. On the first call, this ensures the docker engine is running.
+func (s *dockerConnectorFactory) CreateConnector(
+	ctx context.Context, destURL *url.URL, identity string,
 ) (RemoteConnector, error) {
+	if err := s.ensureDockerRunning(ctx); err != nil {
+		return nil, err
+	}
+
 	return newDockerConnector(destURL, identity, s.dockerClient)
 }
 

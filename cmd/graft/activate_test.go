@@ -152,7 +152,7 @@ func TestActivateScriptConnectionPrompt(t *testing.T) {
 			// Script reads per-session current_connection file (written by daemon, respects pins + CWD)
 			test.That(t, script, test.ShouldContainSubstring, "current_connection")
 
-			// Script should NOT duplicate CWD matching - the daemon handles that
+			// Script should NOT duplicate CWD matching; the daemon handles that
 			test.That(t, script, test.ShouldNotContainSubstring, "connection_roots")
 
 			// Script sets GRAFT_CONNECTION env var

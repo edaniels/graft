@@ -233,7 +233,7 @@ func (h *RunCommandGRPCServerHandler) handleReadStream(reader io.Reader, stdout 
 
 // handleRunningCommand is a bidirectional forwarder of a running command. This gets used by a local client to a local daemon
 // as well as a local daemon to a remote daemon (by way of a Connection).
-// TODO(erd): simplify this - it's handling a running command (local/remote) but as a server (so the remote one is like a client).
+// TODO(erd): simplify this; it's handling a running command (local/remote) but as a server (so the remote one is like a client).
 func (srv *Server) handleRunningCommand(runningCmd RunningCommand, runServer graftv1.GraftService_RunCommandServer) error {
 	runCtx := runServer.Context()
 	handler := RunCommandGRPCServerHandler{runServer: runServer, runningCmd: runningCmd}

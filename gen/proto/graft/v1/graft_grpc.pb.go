@@ -38,6 +38,8 @@ const (
 	GraftService_ForwardSSHAgent_FullMethodName                 = "/graft.v1.GraftService/ForwardSSHAgent"
 	GraftService_WatchPorts_FullMethodName                      = "/graft.v1.GraftService/WatchPorts"
 	GraftService_ForwardPort_FullMethodName                     = "/graft.v1.GraftService/ForwardPort"
+	GraftService_AddPortForwards_FullMethodName                 = "/graft.v1.GraftService/AddPortForwards"
+	GraftService_RemovePortForwards_FullMethodName              = "/graft.v1.GraftService/RemovePortForwards"
 	GraftService_SessionReportCWD_FullMethodName                = "/graft.v1.GraftService/SessionReportCWD"
 	GraftService_SessionWhich_FullMethodName                    = "/graft.v1.GraftService/SessionWhich"
 	GraftService_SessionShimmedCommands_FullMethodName          = "/graft.v1.GraftService/SessionShimmedCommands"
@@ -122,6 +124,11 @@ type GraftServiceClient interface {
 	// session between local and remote. The first ForwardPortRequest must contain a ForwardPortStart
 	// message identifying the target; subsequent messages carry raw payload bytes.
 	ForwardPort(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardPortRequest, ForwardPortResponse], error)
+	// AddPortForwards adds explicit port forwards to a connection. Explicit port forwards
+	// are not affected by auto-detection lifecycle; they persist until explicitly removed.
+	AddPortForwards(ctx context.Context, in *AddPortForwardsRequest, opts ...grpc.CallOption) (*AddPortForwardsResponse, error)
+	// RemovePortForwards removes explicit port forwards from a connection.
+	RemovePortForwards(ctx context.Context, in *RemovePortForwardsRequest, opts ...grpc.CallOption) (*RemovePortForwardsResponse, error)
 	// SessionReportCWD informs the daemon of a session's current working directory so that it can be mirrored on the remote.
 	SessionReportCWD(ctx context.Context, in *SessionReportCWDRequest, opts ...grpc.CallOption) (*SessionReportCWDResponse, error)
 	// SessionWhich asks which connection can handle the given command.
@@ -372,6 +379,26 @@ func (c *graftServiceClient) ForwardPort(ctx context.Context, opts ...grpc.CallO
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type GraftService_ForwardPortClient = grpc.BidiStreamingClient[ForwardPortRequest, ForwardPortResponse]
 
+func (c *graftServiceClient) AddPortForwards(ctx context.Context, in *AddPortForwardsRequest, opts ...grpc.CallOption) (*AddPortForwardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddPortForwardsResponse)
+	err := c.cc.Invoke(ctx, GraftService_AddPortForwards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) RemovePortForwards(ctx context.Context, in *RemovePortForwardsRequest, opts ...grpc.CallOption) (*RemovePortForwardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemovePortForwardsResponse)
+	err := c.cc.Invoke(ctx, GraftService_RemovePortForwards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *graftServiceClient) SessionReportCWD(ctx context.Context, in *SessionReportCWDRequest, opts ...grpc.CallOption) (*SessionReportCWDResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionReportCWDResponse)
@@ -511,6 +538,11 @@ type GraftServiceServer interface {
 	// session between local and remote. The first ForwardPortRequest must contain a ForwardPortStart
 	// message identifying the target; subsequent messages carry raw payload bytes.
 	ForwardPort(grpc.BidiStreamingServer[ForwardPortRequest, ForwardPortResponse]) error
+	// AddPortForwards adds explicit port forwards to a connection. Explicit port forwards
+	// are not affected by auto-detection lifecycle; they persist until explicitly removed.
+	AddPortForwards(context.Context, *AddPortForwardsRequest) (*AddPortForwardsResponse, error)
+	// RemovePortForwards removes explicit port forwards from a connection.
+	RemovePortForwards(context.Context, *RemovePortForwardsRequest) (*RemovePortForwardsResponse, error)
 	// SessionReportCWD informs the daemon of a session's current working directory so that it can be mirrored on the remote.
 	SessionReportCWD(context.Context, *SessionReportCWDRequest) (*SessionReportCWDResponse, error)
 	// SessionWhich asks which connection can handle the given command.
@@ -591,6 +623,12 @@ func (UnimplementedGraftServiceServer) WatchPorts(*WatchPortsRequest, grpc.Serve
 }
 func (UnimplementedGraftServiceServer) ForwardPort(grpc.BidiStreamingServer[ForwardPortRequest, ForwardPortResponse]) error {
 	return status.Error(codes.Unimplemented, "method ForwardPort not implemented")
+}
+func (UnimplementedGraftServiceServer) AddPortForwards(context.Context, *AddPortForwardsRequest) (*AddPortForwardsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddPortForwards not implemented")
+}
+func (UnimplementedGraftServiceServer) RemovePortForwards(context.Context, *RemovePortForwardsRequest) (*RemovePortForwardsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemovePortForwards not implemented")
 }
 func (UnimplementedGraftServiceServer) SessionReportCWD(context.Context, *SessionReportCWDRequest) (*SessionReportCWDResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SessionReportCWD not implemented")
@@ -919,6 +957,42 @@ func _GraftService_ForwardPort_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type GraftService_ForwardPortServer = grpc.BidiStreamingServer[ForwardPortRequest, ForwardPortResponse]
 
+func _GraftService_AddPortForwards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddPortForwardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).AddPortForwards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_AddPortForwards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).AddPortForwards(ctx, req.(*AddPortForwardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_RemovePortForwards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemovePortForwardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).RemovePortForwards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_RemovePortForwards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).RemovePortForwards(ctx, req.(*RemovePortForwardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _GraftService_SessionReportCWD_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SessionReportCWDRequest)
 	if err := dec(in); err != nil {
@@ -1074,6 +1148,14 @@ var GraftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DumpLogs",
 			Handler:    _GraftService_DumpLogs_Handler,
+		},
+		{
+			MethodName: "AddPortForwards",
+			Handler:    _GraftService_AddPortForwards_Handler,
+		},
+		{
+			MethodName: "RemovePortForwards",
+			Handler:    _GraftService_RemovePortForwards_Handler,
 		},
 		{
 			MethodName: "SessionReportCWD",

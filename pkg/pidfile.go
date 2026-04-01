@@ -56,7 +56,7 @@ func killDaemonByPIDFile(pidPath string) {
 		return
 	}
 
-	// Still alive after SIGTERM wait - escalate to SIGKILL.
+	// Still alive after SIGTERM wait; escalate to SIGKILL.
 	slog.Warn("old daemon did not exit after SIGTERM, sending SIGKILL", "pid", pid)
 
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {

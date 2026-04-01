@@ -41,7 +41,7 @@ func RenderJSONLogLine(w io.Writer, line string) {
 	// Expect opening brace.
 	tok, err := dec.Token()
 	if err != nil || tok != json.Delim('{') {
-		// Not valid JSON - write raw line.
+		// Not valid JSON; write raw line.
 		fmt.Fprintln(w, line)
 
 		return
@@ -206,7 +206,7 @@ func decodeSource(dec *json.Decoder) string {
 
 	// Make path relative-looking: strip everything up to and including the module root.
 	// slog records full paths like "/Users/x/go/pkg/mod/github.com/foo/bar/pkg/server.go".
-	// We want just "pkg/server.go" - use the last two path components.
+	// We want just "pkg/server.go" so use the last two path components.
 	file = shortSourcePath(file)
 
 	return fmt.Sprintf("%s:%d", file, int(line))
@@ -247,7 +247,7 @@ func decodeJSONValue(dec *json.Decoder) string {
 	case nil:
 		return "null"
 	case json.Delim:
-		// Object or array - consume it and return raw.
+		// Object or array; consume it and return raw.
 		return consumeComplex(dec, v)
 	default:
 		return fmt.Sprintf("%v", v)

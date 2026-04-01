@@ -310,7 +310,7 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 	_, err = os.Stat(mgr.connectionRootsPath)
 	test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
 
-	// Run one tick - the file should be recreated.
+	// Run one tick: the file should be recreated.
 	mgr.tick(runCtx)
 
 	data, err := os.ReadFile(mgr.connectionRootsPath)
@@ -392,7 +392,7 @@ func TestConnectionByCWD(t *testing.T) {
 		mgr.connections["workspace"] = &Connection{name: "workspace", localRoot: wsRoot}
 		mgr.connections["anvil"] = &Connection{name: "anvil", localRoot: projRoot}
 
-		// Both connections match projSubDir - should refuse to auto-select.
+		// Both connections match projSubDir and should refuse to auto-select.
 		_, ok := mgr.matchConnectionByCWD(context.Background(), projSubDir)
 		test.That(t, ok, test.ShouldBeFalse)
 	})

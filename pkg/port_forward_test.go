@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -323,7 +324,7 @@ func TestForwardPortTCPHalfClose(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldBeNil)
 
-	// Close send side - propagates FIN to TCP server via CloseWrite.
+	// Close send side; propagates FIN to TCP server via CloseWrite.
 	err = stream.CloseSend()
 	test.That(t, err, test.ShouldBeNil)
 
@@ -423,7 +424,7 @@ func TestRelaySurvivesListenerCancel(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, string(buf), test.ShouldEqual, "hello")
 
-	// Cancel fwdCtx - simulates port leaving LISTEN state.
+	// Cancel fwdCtx; simulates port leaving LISTEN state.
 	fwdCancel()
 
 	// Poll until new connections are refused (listener closed).
@@ -440,7 +441,7 @@ func TestRelaySurvivesListenerCancel(t *testing.T) {
 		return false
 	}), test.ShouldBeNil)
 
-	// Existing connection should STILL work - relay on relayCtx survives.
+	// Existing connection should STILL work; relay on relayCtx survives.
 	_, err = client.Write([]byte("world"))
 	test.That(t, err, test.ShouldBeNil)
 
@@ -465,13 +466,13 @@ func TestParseHexIP(t *testing.T) {
 		{"00000000000000000000000001000000", "::1"},
 		// IPv6 all-zeros: ::
 		{"00000000000000000000000000000000", "::"},
-		// Non-trivial IPv6: 2001:db8::1 - exercises byte reversal in all four groups.
+		// Non-trivial IPv6: 2001:db8::1; exercises byte reversal in all four groups.
 		// Group 0: 2001:0db8 -> bytes 20 01 0d b8 -> LE reversed B8 0D 01 20
 		// Group 1: 0000:0000 -> 00000000
 		// Group 2: 0000:0000 -> 00000000
 		// Group 3: 0000:0001 -> bytes 00 00 00 01 -> LE reversed 01 00 00 00
 		{"B80D0120000000000000000001000000", "2001:db8::1"},
-		// fe80::1 - link-local address.
+		// fe80::1: link-local address.
 		// Group 0: fe80:0000 -> bytes fe 80 00 00 -> LE reversed 00 00 80 FE
 		// Group 1-2: zeros
 		// Group 3: 0000:0001 -> 01000000
@@ -569,6 +570,179 @@ func TestParseProcNetMalformed(t *testing.T) {
 	// Only the valid entry should parse.
 	test.That(t, len(ports), test.ShouldEqual, 1)
 	test.That(t, ports[0].Port, test.ShouldEqual, 8080)
+}
+
+func TestAddExplicitPortForward(t *testing.T) {
+	sockPath := startTestRemoteDaemon(t)
+	echoPort := startEchoServer(t)
+
+	remoteConn := connectToTestDaemon(t, sockPath)
+	daemon := testDaemonForRelay(remoteConn)
+
+	spec := PortForwardSpec{
+		RemotePort: echoPort,
+		LocalPort:  0, // should default to echoPort
+		Protocol:   "tcp",
+	}
+
+	// Need a different local port since echo server already has the remote port.
+	freeListener, freePort := listenFreePort(t)
+	freeListener.Close()
+
+	spec.LocalPort = freePort
+
+	err := daemon.AddExplicitPortForward(t.Context(), spec)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Verify forward is active and marked explicit.
+	statuses := daemon.PortForwardStatuses()
+	test.That(t, len(statuses), test.ShouldEqual, 1)
+	test.That(t, statuses[0].GetExplicit(), test.ShouldBeTrue)
+	test.That(t, statuses[0].GetLocalPort(), test.ShouldEqual, freePort)
+	test.That(t, statuses[0].GetRemotePort(), test.ShouldEqual, echoPort)
+
+	// Verify data flows through the forward.
+	client, dialErr := (&net.Dialer{}).DialContext(t.Context(), "tcp", fmt.Sprintf("127.0.0.1:%d", freePort))
+	test.That(t, dialErr, test.ShouldBeNil)
+
+	defer client.Close()
+
+	_, writeErr := client.Write([]byte("hello"))
+	test.That(t, writeErr, test.ShouldBeNil)
+
+	buf := make([]byte, 5)
+
+	_, readErr := io.ReadFull(client, buf)
+	test.That(t, readErr, test.ShouldBeNil)
+	test.That(t, string(buf), test.ShouldEqual, "hello")
+}
+
+func TestAddExplicitPortForwardIdempotent(t *testing.T) {
+	daemon := newRemoteDaemon(&noopConnector{})
+
+	// Use a port that won't conflict.
+	freeListener, freePort := listenFreePort(t)
+	freeListener.Close()
+
+	spec := PortForwardSpec{
+		RemotePort: freePort,
+		LocalPort:  freePort,
+		Protocol:   "tcp",
+	}
+
+	// First add succeeds (will conflict since nothing is listening remotely, but
+	// the explicit intent is recorded; the listener binds locally).
+	// Actually, for this test we just want to verify idempotency of the explicit intent,
+	// not the actual relay. Use AddExplicitPortForward which binds locally.
+	err := daemon.AddExplicitPortForward(t.Context(), spec)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Second add is a no-op.
+	err = daemon.AddExplicitPortForward(t.Context(), spec)
+	test.That(t, err, test.ShouldBeNil)
+
+	test.That(t, len(daemon.PortForwardStatuses()), test.ShouldEqual, 1)
+}
+
+func TestRemoveExplicitPortForward(t *testing.T) {
+	daemon := newRemoteDaemon(&noopConnector{})
+
+	freeListener, freePort := listenFreePort(t)
+	freeListener.Close()
+
+	spec := PortForwardSpec{
+		RemotePort: freePort,
+		LocalPort:  freePort,
+		Protocol:   "tcp",
+	}
+
+	err := daemon.AddExplicitPortForward(t.Context(), spec)
+	test.That(t, err, test.ShouldBeNil)
+
+	test.That(t, len(daemon.PortForwardStatuses()), test.ShouldEqual, 1)
+
+	removed := daemon.RemoveExplicitPortForward(spec)
+	test.That(t, removed, test.ShouldBeTrue)
+	test.That(t, daemon.PortForwardStatuses(), test.ShouldBeEmpty)
+
+	// Removing again returns false.
+	removed = daemon.RemoveExplicitPortForward(spec)
+	test.That(t, removed, test.ShouldBeFalse)
+}
+
+func TestRemoveAutoDetectedPortForwardReturnsFalse(t *testing.T) {
+	daemon := newRemoteDaemon(&noopConnector{})
+
+	spec := PortForwardSpec{
+		RemotePort: 8080,
+		Protocol:   "tcp",
+	}
+
+	// No explicit forward was added, so remove should return false.
+	removed := daemon.RemoveExplicitPortForward(spec)
+	test.That(t, removed, test.ShouldBeFalse)
+}
+
+func TestExplicitPortForwardSurvivesReconciliation(t *testing.T) {
+	daemon := newRemoteDaemon(&noopConnector{})
+
+	freeListener, freePort := listenFreePort(t)
+	freeListener.Close()
+
+	spec := PortForwardSpec{
+		RemotePort: freePort,
+		LocalPort:  freePort,
+		Protocol:   "tcp",
+	}
+
+	err := daemon.AddExplicitPortForward(t.Context(), spec)
+	test.That(t, err, test.ShouldBeNil)
+
+	test.That(t, len(daemon.PortForwardStatuses()), test.ShouldEqual, 1)
+
+	// Reconcile with an empty port list (auto-detection sees nothing).
+	// The explicit forward should survive.
+	daemon.reconcilePortForwards(t.Context(), nil)
+
+	statuses := daemon.PortForwardStatuses()
+	test.That(t, len(statuses), test.ShouldEqual, 1)
+	test.That(t, statuses[0].GetExplicit(), test.ShouldBeTrue)
+	test.That(t, statuses[0].GetRemotePort(), test.ShouldEqual, freePort)
+}
+
+func TestAddExplicitPortForwardConflict(t *testing.T) {
+	// Occupy a port.
+	listener, port := listenFreePort(t)
+	defer listener.Close()
+
+	daemon := newRemoteDaemon(&noopConnector{})
+	spec := PortForwardSpec{
+		RemotePort: 9999, // doesn't matter
+		LocalPort:  port,
+		Protocol:   "tcp",
+	}
+
+	err := daemon.AddExplicitPortForward(t.Context(), spec)
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "already in use")
+
+	// Should not be recorded as explicit.
+	test.That(t, daemon.IsExplicitPortForward("tcp", 9999), test.ShouldBeFalse)
+}
+
+// listenFreePort binds a TCP listener on a random free port and returns it.
+func listenFreePort(t *testing.T) (net.Listener, uint32) {
+	t.Helper()
+
+	var lc net.ListenConfig
+
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	test.That(t, err, test.ShouldBeNil)
+
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	test.That(t, ok, test.ShouldBeTrue)
+
+	return ln, uint32(tcpAddr.Port) //nolint:gosec // test code
 }
 
 // noopConnector satisfies the RemoteConnector interface for testing.

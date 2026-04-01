@@ -71,6 +71,19 @@ func (h *HTTPSReleaseClient) DownloadBinary(ctx context.Context, version, binary
 	return nil
 }
 
+const maxReleaseNotesSize = 1 << 20 // 1 MB
+
+func (h *HTTPSReleaseClient) ReleaseNotes(ctx context.Context, version string) (string, error) {
+	url := h.baseURL + "/" + version + "/release-notes.txt"
+
+	data, err := h.get(ctx, url, maxReleaseNotesSize)
+	if err != nil {
+		return "", errors.WrapPrefix(err, "fetching release notes")
+	}
+
+	return strings.TrimSpace(string(data)), nil
+}
+
 func (h *HTTPSReleaseClient) get(ctx context.Context, url string, maxSize int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

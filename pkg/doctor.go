@@ -118,11 +118,16 @@ func CheckUpdates(ctx context.Context, client ReleaseClient, currentVersion stri
 	}
 
 	if result.UpdateAvailable {
-		return CheckResult{
+		cr := CheckResult{
 			Name:    "Updates",
 			Status:  CheckWarn,
 			Message: fmt.Sprintf("update available: %s -> %s", currentVersion, result.LatestVersion),
 		}
+		if result.ReleaseNotes != "" {
+			cr.Details = ReleaseNotesLines(result.ReleaseNotes)
+		}
+
+		return cr
 	}
 
 	return CheckResult{

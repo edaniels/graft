@@ -118,12 +118,27 @@ rm -f "$CHECKSUMS_FILE"
     done
 )
 
+say "Generating release notes..."
+NOTES_FILE="${BIN_DIR}/release-notes.txt"
+
+# Fetch the previous latest version from S3 (if any).
+PREV_TAG="$(aws s3 cp "${S3_PATH}/latest" - 2>/dev/null | tr -d '[:space:]')" || true
+
+if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+    say "Changelog: ${PREV_TAG}..${TAG}"
+    git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${TAG}" > "$NOTES_FILE"
+else
+    say "First release - using recent commits"
+    git log --pretty=format:"- %s (%h)" -20 > "$NOTES_FILE"
+fi
+
 say "Uploading versioned artifacts to ${S3_PATH}/${TAG}/..."
 for platform in $PLATFORMS; do
     binary="${BIN_DIR}/graft-${platform}"
     aws s3 cp "$binary" "${S3_PATH}/${TAG}/graft-${platform}"
 done
 aws s3 cp "$CHECKSUMS_FILE" "${S3_PATH}/${TAG}/checksums.txt"
+aws s3 cp "$NOTES_FILE" "${S3_PATH}/${TAG}/release-notes.txt" --content-type "text/plain"
 
 say "Updating latest pointer..."
 echo "$TAG" | aws s3 cp - "${S3_PATH}/latest" --content-type "text/plain"

@@ -29,18 +29,25 @@ func newTestGitHubReleaseClient(t *testing.T) (*GitHubReleaseClient, *http.Serve
 
 	ghClient.BaseURL = baseURL
 
-	return &GitHubReleaseClient{
-		client:         ghClient,
-		cachedReleases: make(map[string]*github.RepositoryRelease),
-	}, mux
+	return &GitHubReleaseClient{client: ghClient}, mux
 }
 
 func writeReleaseJSON(t *testing.T, w http.ResponseWriter, tagName string, assets ...*github.ReleaseAsset) {
 	t.Helper()
 
+	writeReleaseJSONWithBody(t, w, tagName, "", assets...)
+}
+
+func writeReleaseJSONWithBody(t *testing.T, w http.ResponseWriter, tagName, body string, assets ...*github.ReleaseAsset) {
+	t.Helper()
+
 	release := github.RepositoryRelease{
 		TagName: &tagName,
 		Assets:  assets,
+	}
+
+	if body != "" {
+		release.Body = &body
 	}
 
 	data, err := json.Marshal(release)
@@ -207,6 +214,52 @@ func TestGitHubReleaseClientDownloadAndVerify(t *testing.T) {
 		_, _, err := DownloadAndVerify(t.Context(), client, "v1.0.0")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "asset not found")
+	})
+}
+
+func TestGitHubReleaseClientReleaseNotes(t *testing.T) {
+	t.Run("returns body from release", func(t *testing.T) {
+		client, mux := newTestGitHubReleaseClient(t)
+		body := "## What's New\n- Fixed bug\n- Added feature"
+
+		mux.HandleFunc("/repos/edaniels/graft/releases/tags/v1.5.0", func(w http.ResponseWriter, _ *http.Request) {
+			writeReleaseJSONWithBody(t, w, "v1.5.0", body)
+		})
+
+		notes, err := client.ReleaseNotes(t.Context(), "v1.5.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, notes, test.ShouldEqual, body)
+	})
+
+	t.Run("returns empty when body is nil", func(t *testing.T) {
+		client, mux := newTestGitHubReleaseClient(t)
+		mux.HandleFunc("/repos/edaniels/graft/releases/tags/v1.5.0", func(w http.ResponseWriter, _ *http.Request) {
+			writeReleaseJSON(t, w, "v1.5.0")
+		})
+
+		notes, err := client.ReleaseNotes(t.Context(), "v1.5.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, notes, test.ShouldBeEmpty)
+	})
+
+	t.Run("fetches release for notes after LatestVersion", func(t *testing.T) {
+		client, mux := newTestGitHubReleaseClient(t)
+		body := "- Bug fix"
+
+		mux.HandleFunc("/repos/edaniels/graft/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+			writeReleaseJSONWithBody(t, w, "v1.5.0", body)
+		})
+		mux.HandleFunc("/repos/edaniels/graft/releases/tags/v1.5.0", func(w http.ResponseWriter, _ *http.Request) {
+			writeReleaseJSONWithBody(t, w, "v1.5.0", body)
+		})
+
+		version, err := client.LatestVersion(t.Context())
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, version, test.ShouldEqual, "v1.5.0")
+
+		notes, err := client.ReleaseNotes(t.Context(), "v1.5.0")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, notes, test.ShouldEqual, body)
 	})
 }
 

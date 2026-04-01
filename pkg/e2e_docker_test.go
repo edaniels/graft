@@ -509,10 +509,7 @@ func requireDocker(t *testing.T) {
 func (env *e2eDockerEnv) dockerConnectorFactory(t *testing.T) ConnectorFactory {
 	t.Helper()
 
-	factory, err := newDockerConnectorFactory(t.Context())
-	test.That(t, err, test.ShouldBeNil)
-
-	return factory
+	return newDockerConnectorFactory()
 }
 
 func (env *e2eDockerEnv) sshConnectorFactory(t *testing.T) ConnectorFactory {

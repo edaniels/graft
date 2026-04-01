@@ -280,6 +280,8 @@ func (srv *Server) restore(runCtx context.Context) error {
 				}
 			}
 
+			srv.restorePortForwards(runCtx, conf)
+
 			slog.DebugContext(runCtx, "restored connection", "name", conf.Name)
 
 			errs <- nil
@@ -292,6 +294,37 @@ func (srv *Server) restore(runCtx context.Context) error {
 	}
 
 	return errors.Join(allErrs...)
+}
+
+func (srv *Server) restorePortForwards(ctx context.Context, conf ConnectionConfig) {
+	if len(conf.Ports) == 0 {
+		return
+	}
+
+	conn, err := srv.connMgr.Connection(conf.Name)
+	if err != nil {
+		slog.ErrorContext(ctx, "error getting connection for port restore",
+			"name", conf.Name, "error", err)
+
+		return
+	}
+
+	daemon := conn.lockedDaemon()
+
+	for _, portSpec := range conf.Ports {
+		parsed, parseErr := ParsePortSpec(portSpec)
+		if parseErr != nil {
+			slog.ErrorContext(ctx, "invalid port spec in config, skipping",
+				"name", conf.Name, "spec", portSpec, "error", parseErr)
+
+			continue
+		}
+
+		if fwdErr := daemon.AddExplicitPortForward(ctx, parsed); fwdErr != nil {
+			slog.ErrorContext(ctx, "error restoring explicit port forward",
+				"name", conf.Name, "spec", portSpec, "error", fwdErr)
+		}
+	}
 }
 
 func (srv *Server) persistConfig() {

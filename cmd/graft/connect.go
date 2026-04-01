@@ -67,12 +67,15 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 		client, ctx := newClient(cmd.Context(), true)
 		defer client.Close()
 
+		fwdCommands, fwdPorts := partitionForwardArgs(connectForward)
+
 		params := graft.ConnectParams{
 			Name:            connectName,
 			LocalRoot:       localDir,
 			RemoteRoot:      remoteDir,
-			ForwardCommands: connectForward,
+			ForwardCommands: fwdCommands,
 			ForwardPrefix:   connectForwardPrefix,
+			PortForwards:    fwdPorts,
 			WithSync:        connectSyncFlag,
 			Background:      connectBackground,
 		}
@@ -134,7 +137,7 @@ func parseSSHURLRemoteDir(dest string) (string, string) {
 		return "ssh://" + bareDest + ":" + possiblePort, after
 	}
 
-	// Not a port - the whole thing is a remote dir (e.g., "some:path").
+	// Not a port: the whole thing is a remote dir (e.g., "some:path").
 	return "ssh://" + bareDest, afterHost
 }
 
@@ -297,12 +300,15 @@ type resolveProjectConnectInput struct {
 }
 
 func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectParams {
+	commands, ports := partitionForwardArgs(in.forwards)
+
 	params := graft.ConnectParams{
 		Name:            in.destName,
 		LocalRoot:       in.projectDir,
 		RemoteRoot:      in.destConfig.SyncTo,
-		ForwardCommands: in.forwards,
+		ForwardCommands: commands,
 		ForwardPrefix:   in.destConfig.Prefix,
+		PortForwards:    ports,
 	}
 
 	// Workspace sync takes precedence over project-level sync because it syncs

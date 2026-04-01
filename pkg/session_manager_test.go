@@ -145,7 +145,7 @@ func TestSelectConnectionUsesPin(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, conn.Name(), test.ShouldEqual, "connA")
 
-	// Pin to connB - should override CWD.
+	// Pin to connB; should override CWD.
 	sess.SetPinnedConnection("connB")
 	conn, err = mgr.selectConnection(ctx, sess, "", rootA)
 	test.That(t, err, test.ShouldBeNil)
@@ -254,7 +254,7 @@ func TestResolveSessionConnectionRespectsPin(t *testing.T) {
 	test.That(t, ok, test.ShouldBeTrue)
 	test.That(t, conn.Name(), test.ShouldEqual, "connA")
 
-	// Pin to connB - resolveSessionConnection should return connB.
+	// Pin to connB; resolveSessionConnection should return connB.
 	sess.SetPinnedConnection("connB")
 
 	conn, ok = mgr.resolveSessionConnection(ctx, sess)

@@ -595,7 +595,7 @@ func daemonBinPath(ctx context.Context, osName, archName string) (string, error)
 		if !errors.As(err, &notEmbedded) {
 			return "", errors.WrapPrefix(err, "error getting embedded binary")
 		}
-		// NotEmbeddedError - fall through to local compilation
+		// NotEmbeddedError: fall through to local compilation
 	}
 
 	if binData != nil {

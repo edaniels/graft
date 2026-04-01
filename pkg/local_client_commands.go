@@ -315,6 +315,7 @@ type ConnectParams struct {
 	// Post-init options.
 	ForwardCommands []string
 	ForwardPrefix   bool
+	PortForwards    []string // explicit port forward specs (e.g. "8080", "3000:8080/tcp")
 	WithSync        bool
 
 	// SyncSource/SyncDest override LocalRoot/RemoteRoot for sync when set.
@@ -386,6 +387,12 @@ func (client *LocalClient) postInitConnection(
 		if fwdErr := client.ForwardCommands(ctx, params.ForwardCommands, resolvedConnectionName,
 			params.ForwardPrefix,
 		); fwdErr != nil {
+			return fwdErr
+		}
+	}
+
+	if len(params.PortForwards) > 0 {
+		if fwdErr := client.AddPortForwards(ctx, params.PortForwards, resolvedConnectionName); fwdErr != nil {
 			return fwdErr
 		}
 	}
@@ -763,6 +770,111 @@ func (client *LocalClient) RemoveForwardCommands(ctx context.Context, commands [
 		Commands:       commands,
 	}); err != nil {
 		return client.handleError(err)
+	}
+
+	return nil
+}
+
+// AddPortForwards adds explicit port forwards to a connection.
+func (client *LocalClient) AddPortForwards(ctx context.Context, portSpecs []string, connectionName string) error {
+	specs, err := ParsePortSpecsToProto(portSpecs)
+	if err != nil {
+		return err
+	}
+
+	if _, err := client.GraftServiceClient.AddPortForwards(ctx, &graftv1.AddPortForwardsRequest{
+		ConnectionName: connectionName,
+		Ports:          specs,
+	}); err != nil {
+		return client.handleError(err)
+	}
+
+	return nil
+}
+
+// RemovePortForwards removes explicit port forwards from a connection.
+// Returns the list of ports that were only auto-detected (not explicitly forwarded).
+func (client *LocalClient) RemovePortForwards(ctx context.Context, portSpecs []string, connectionName string) ([]PortForwardSpec, error) {
+	specs, err := ParsePortSpecsToProto(portSpecs)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.GraftServiceClient.RemovePortForwards(ctx, &graftv1.RemovePortForwardsRequest{
+		ConnectionName: connectionName,
+		Ports:          specs,
+	})
+	if err != nil {
+		return nil, client.handleError(err)
+	}
+
+	autoDetected := make([]PortForwardSpec, 0, len(resp.GetAutoDetectedPorts()))
+	for _, p := range resp.GetAutoDetectedPorts() {
+		autoDetected = append(autoDetected, PortForwardSpecFromProto(p))
+	}
+
+	return autoDetected, nil
+}
+
+// PrintPortForwards prints the port forwards, optionally filtered to a single connection.
+func (client *LocalClient) PrintPortForwards(ctx context.Context, connectionName string) error {
+	req := &graftv1.ListConnectionsRequest{}
+
+	sessPID, sessPIDOk := client.sessionPID()
+	if sessPIDOk {
+		req.Pid = sessPID
+	}
+
+	resp, err := client.ListConnections(ctx, req)
+	if err != nil {
+		return client.handleError(err)
+	}
+
+	connNames := make([]string, 0, len(resp.GetConnections()))
+	for name := range resp.GetConnections() {
+		if connectionName != "" && name != connectionName {
+			continue
+		}
+
+		connNames = append(connNames, name)
+	}
+
+	slices.Sort(connNames)
+
+	for _, name := range connNames {
+		status := resp.GetConnections()[name]
+		ports := status.GetPortForwardStatuses()
+
+		if len(ports) == 0 {
+			continue
+		}
+
+		fmt.Fprintf(client.errWriter, "%s:\n", name)
+
+		for _, pf := range ports {
+			label := "auto"
+			if pf.GetExplicit() {
+				label = "explicit"
+			}
+
+			if pf.GetConflict() {
+				fmt.Fprintf(client.errWriter, "  %s %s %d -> remote:%d [%s] %s\n",
+					color.RedString("CONFLICT"),
+					pf.GetProtocol(),
+					pf.GetLocalPort(),
+					pf.GetRemotePort(),
+					label,
+					pf.GetConflictReason(),
+				)
+			} else {
+				fmt.Fprintf(client.errWriter, "  %s localhost:%d -> remote:%d [%s]\n",
+					pf.GetProtocol(),
+					pf.GetLocalPort(),
+					pf.GetRemotePort(),
+					label,
+				)
+			}
+		}
 	}
 
 	return nil

@@ -26,7 +26,7 @@ func TestGraftDirHelpers(t *testing.T) {
 		fn   func(string) string
 		want string
 	}{
-		// graftConfigHome tests - returns ~/.config/graft
+		// graftConfigHome tests; returns ~/.config/graft
 		{
 			"configHome default",
 			testEnv{"GRAFT_CONFIG_HOME": "", "XDG_CONFIG_HOME": ""},
@@ -55,7 +55,7 @@ func TestGraftDirHelpers(t *testing.T) {
 			"/graft/config",
 		},
 
-		// graftStateHome tests - returns ~/.local/state/graft
+		// graftStateHome tests; returns ~/.local/state/graft
 		{
 			"stateHome default",
 
@@ -114,7 +114,7 @@ func TestPathFunctions(t *testing.T) {
 		wantSuffix string // use suffix match for paths that include user home
 		wantExact  string // use exact match when env override is set
 	}{
-		// Socket paths - inside graft state dir
+		// Socket paths; inside graft state dir
 		{
 			"socket local default",
 			clearEnv,
@@ -159,7 +159,7 @@ func TestPathFunctions(t *testing.T) {
 			"/graft/state/local/graftd.sock",
 		},
 
-		// Config paths - inside graft config dir
+		// Config paths; inside graft config dir
 		{
 			"config local default",
 			clearEnv,
@@ -204,7 +204,7 @@ func TestPathFunctions(t *testing.T) {
 			"/graft/config/local/config.yml",
 		},
 
-		// Logs paths - inside graft state dir
+		// Logs paths; inside graft state dir
 		{
 			"logs local default",
 			clearEnv,
@@ -249,7 +249,7 @@ func TestPathFunctions(t *testing.T) {
 			"/graft/state/local/logs",
 		},
 
-		// Sessions paths - inside graft state dir
+		// Sessions paths; inside graft state dir
 		{
 			"sessions default",
 			clearEnv,

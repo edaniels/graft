@@ -144,6 +144,18 @@ func TestResolveProjectConnectParams(t *testing.T) {
 
 		test.That(t, params.WithSync, test.ShouldBeFalse)
 	})
+
+	t.Run("mixed commands and ports are partitioned", func(t *testing.T) {
+		params := resolveProjectConnectParams(resolveProjectConnectInput{
+			projectDir: "/home/user/myproject",
+			destName:   "myconn",
+			destConfig: ProjectDestinationConfig{Host: "myhost", User: "ubuntu", SyncTo: "~/proj"},
+			forwards:   []string{"make", "8080", "go", "3000:5432/tcp"},
+		})
+
+		test.That(t, params.ForwardCommands, test.ShouldResemble, []string{"make", "go"})
+		test.That(t, params.PortForwards, test.ShouldResemble, []string{"8080", "3000:5432/tcp"})
+	})
 }
 
 func TestConnectBackgroundFlag(t *testing.T) {

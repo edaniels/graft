@@ -131,6 +131,8 @@ type ConnectionConfig struct {
 	Synchronizations []SynchronizationIntentConfig `yaml:"synchronizations"`
 	// Whether this connection is a background connection, excluded from CWD-based auto-selection.
 	Background bool `yaml:"background,omitempty"`
+	// Explicit port forwards for this connection (e.g. "8080", "3000:8080/tcp").
+	Ports []string `yaml:"ports,omitempty"`
 }
 
 var errConnectionConfigDuplicateForwarding = errors.NewBare("connection duplicate forwarding detected")

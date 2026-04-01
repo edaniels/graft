@@ -379,7 +379,7 @@ func TestConnectionStateDerivedFromDaemon(t *testing.T) {
 	state, _ := conn.State()
 	test.That(t, state, test.ShouldEqual, ConnectionStateConnected)
 
-	// Close connection - it reports Closed while daemon is still Connected.
+	// Close connection which should report Closed while daemon is still Connected.
 	test.That(t, conn.Close(), test.ShouldBeNil)
 
 	connState, _ := conn.State()

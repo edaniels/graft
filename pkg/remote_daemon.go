@@ -39,6 +39,7 @@ type activePortForward struct {
 	relayCancel    context.CancelFunc // cancels relay goroutines (relayCtx); used during Close()
 	conflict       bool
 	conflictReason string
+	explicit       bool // true if user-requested, false if auto-detected
 }
 
 // remoteDaemon is the first-class entity representing a connection to a remote daemon.
@@ -63,6 +64,7 @@ type remoteDaemon struct {
 	cancelMonitor     func()
 	cancelMonitorPort func()
 	portForwards      map[string]*activePortForward
+	explicitPorts     map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
 
 	availableCommands atomic.Pointer[[]string]
 	activeWorkers     sync.WaitGroup
@@ -86,8 +88,9 @@ type remoteDaemon struct {
 // newRemoteDaemon creates a remoteDaemon that owns the given connector.
 func newRemoteDaemon(connector RemoteConnector) *remoteDaemon {
 	d := &remoteDaemon{
-		connector:    connector,
-		portForwards: map[string]*activePortForward{},
+		connector:     connector,
+		portForwards:  map[string]*activePortForward{},
+		explicitPorts: map[string]PortForwardSpec{},
 	}
 	d.availableCommands.Store(&[]string{})
 
@@ -169,10 +172,156 @@ func (d *remoteDaemon) PortForwardStatuses() []*graftv1.PortForwardStatus {
 			Protocol:       fwd.protocol,
 			Conflict:       fwd.conflict,
 			ConflictReason: fwd.conflictReason,
+			Explicit:       fwd.explicit,
 		})
 	}
 
 	return statuses
+}
+
+type portForwardOptions struct {
+	localPort uint32
+	explicit  bool
+}
+
+type portForwardOption func(*portForwardOptions)
+
+func withLocalPort(localPort uint32) portForwardOption {
+	return func(o *portForwardOptions) {
+		o.localPort = localPort
+	}
+}
+
+func withExplicit() portForwardOption {
+	return func(o *portForwardOptions) {
+		o.explicit = true
+	}
+}
+
+// AddExplicitPortForward adds a user-requested port forward. Explicit port forwards
+// survive auto-detection reconciliation; they are never torn down by the auto-detection
+// lifecycle. Returns an error if the local port is already in use.
+func (d *remoteDaemon) AddExplicitPortForward(ctx context.Context, spec PortForwardSpec) error {
+	localPort := spec.EffectiveLocalPort()
+	protocol := spec.EffectiveProtocol()
+	key := portForwardKey(protocol, spec.RemotePort)
+
+	d.mu.Lock()
+
+	// Check if this explicit forward already exists.
+	if _, ok := d.explicitPorts[key]; ok {
+		d.mu.Unlock()
+
+		return nil
+	}
+
+	// Record the explicit intent.
+	d.explicitPorts[key] = spec
+
+	// If an auto-detected forward already exists for this remote port, replace it
+	// (it may have a different local port or we need to mark it explicit).
+	if existing, ok := d.portForwards[key]; ok {
+		if existing.localPort == localPort && !existing.conflict {
+			// Same local port, just mark as explicit.
+			existing.explicit = true
+
+			d.mu.Unlock()
+
+			return nil
+		}
+
+		// Different local port or conflicted; tear down and restart.
+		if existing.listener != nil {
+			existing.listener.Close()
+		}
+
+		existing.cancel()
+		existing.relayCancel()
+		delete(d.portForwards, key)
+	}
+
+	d.mu.Unlock()
+
+	portInfo := &graftv1.PortInfo{
+		Port:     spec.RemotePort,
+		Host:     "127.0.0.1",
+		Protocol: protocol,
+	}
+
+	// Use the daemon's long-lived context, not the caller's request context.
+	// The caller is typically a gRPC handler whose context is canceled when
+	// the RPC returns, which would immediately tear down the listener and
+	// relay goroutines.
+	fwdCtx := d.runCtx
+	if fwdCtx == nil {
+		fwdCtx = ctx
+	}
+
+	newFwd := d.startPortForward(fwdCtx, portInfo, withLocalPort(localPort), withExplicit())
+
+	if newFwd.conflict {
+		d.mu.Lock()
+		delete(d.explicitPorts, key)
+		d.mu.Unlock()
+
+		return errors.Errorf("port %d already in use locally: %s", localPort, newFwd.conflictReason)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.closed {
+		newFwd.cancel()
+		newFwd.relayCancel()
+
+		return errors.New("daemon is closed")
+	}
+
+	d.portForwards[key] = newFwd
+
+	return nil
+}
+
+// RemoveExplicitPortForward removes a user-requested port forward. Returns true if the
+// port was an explicit forward and was removed, false if it was only auto-detected.
+func (d *remoteDaemon) RemoveExplicitPortForward(spec PortForwardSpec) bool {
+	key := portForwardKey(spec.EffectiveProtocol(), spec.RemotePort)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if _, ok := d.explicitPorts[key]; !ok {
+		return false
+	}
+
+	delete(d.explicitPorts, key)
+
+	// Cancel the active forward. On the next reconciliation, if auto-detection
+	// sees this port, it will re-create it as auto-detected.
+	if fwd, ok := d.portForwards[key]; ok {
+		if fwd.listener != nil {
+			fwd.listener.Close()
+		}
+
+		fwd.cancel()
+		fwd.relayCancel()
+		delete(d.portForwards, key)
+	}
+
+	return true
+}
+
+// IsExplicitPortForward returns true if the given port spec is currently an explicit forward.
+func (d *remoteDaemon) IsExplicitPortForward(protocol string, remotePort uint32) bool {
+	spec := PortForwardSpec{Protocol: protocol, RemotePort: remotePort}
+	key := portForwardKey(spec.EffectiveProtocol(), remotePort)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, ok := d.explicitPorts[key]
+
+	return ok
 }
 
 // Destination returns the connector's destination URI.
@@ -918,12 +1067,25 @@ func (d *remoteDaemon) hasConflictedForwards() bool {
 }
 
 // reconcilePortForwards is only called serially from the single runPortWatchStream goroutine.
+//
+//nolint:gocognit // reconciliation logic with explicit port injection is inherently branchy
 func (d *remoteDaemon) reconcilePortForwards(ctx context.Context, remotePorts []*graftv1.PortInfo) {
 	d.mu.Lock()
 
 	remoteSet := make(map[string]*graftv1.PortInfo, len(remotePorts))
 	for _, p := range remotePorts {
 		remoteSet[portForwardKey(p.GetProtocol(), p.GetPort())] = p
+	}
+
+	// Inject explicit ports so they are never torn down by auto-detection disappearing.
+	for key, spec := range d.explicitPorts {
+		if _, ok := remoteSet[key]; !ok {
+			remoteSet[key] = &graftv1.PortInfo{
+				Port:     spec.RemotePort,
+				Host:     "127.0.0.1",
+				Protocol: spec.EffectiveProtocol(),
+			}
+		}
 	}
 
 	for key, fwd := range d.portForwards {
@@ -939,7 +1101,23 @@ func (d *remoteDaemon) reconcilePortForwards(ctx context.Context, remotePorts []
 		}
 	}
 
-	toStart := map[string]*graftv1.PortInfo{}
+	type portToStart struct {
+		info *graftv1.PortInfo
+		opts []portForwardOption
+	}
+
+	// explicitOptsForKey returns port forward options if the key corresponds to an explicit forward.
+	// Must be called under d.mu.
+	explicitOptsForKey := func(key string) []portForwardOption {
+		spec, isExplicit := d.explicitPorts[key]
+		if !isExplicit {
+			return nil
+		}
+
+		return []portForwardOption{withLocalPort(spec.EffectiveLocalPort()), withExplicit()}
+	}
+
+	toStart := map[string]portToStart{}
 
 	for key, fwd := range d.portForwards {
 		if !fwd.conflict {
@@ -954,7 +1132,7 @@ func (d *remoteDaemon) reconcilePortForwards(ctx context.Context, remotePorts []
 			fwd.cancel()
 			delete(d.portForwards, key)
 
-			toStart[key] = p
+			toStart[key] = portToStart{info: p, opts: explicitOptsForKey(key)}
 		}
 	}
 
@@ -964,7 +1142,7 @@ func (d *remoteDaemon) reconcilePortForwards(ctx context.Context, remotePorts []
 		}
 
 		if _, retrying := toStart[key]; !retrying {
-			toStart[key] = p
+			toStart[key] = portToStart{info: p, opts: explicitOptsForKey(key)}
 		}
 	}
 
@@ -972,12 +1150,13 @@ func (d *remoteDaemon) reconcilePortForwards(ctx context.Context, remotePorts []
 
 	newForwards := make(map[string]*activePortForward, len(toStart))
 
-	for key, p := range toStart {
-		newFwd := d.startPortForward(ctx, p)
+	for key, pts := range toStart {
+		newFwd := d.startPortForward(ctx, pts.info, pts.opts...)
 		newForwards[key] = newFwd
 
 		if !newFwd.conflict {
-			slog.InfoContext(ctx, "forwarding port", "protocol", newFwd.protocol, "port", newFwd.remotePort)
+			slog.InfoContext(ctx, "forwarding port", "protocol", newFwd.protocol, "port", newFwd.remotePort,
+				"localPort", newFwd.localPort, "explicit", newFwd.explicit)
 		}
 	}
 
@@ -996,23 +1175,34 @@ func (d *remoteDaemon) reconcilePortForwards(ctx context.Context, remotePorts []
 	maps.Copy(d.portForwards, newForwards)
 }
 
-func (d *remoteDaemon) startPortForward(ctx context.Context, portInfo *graftv1.PortInfo) *activePortForward {
+func (d *remoteDaemon) startPortForward(ctx context.Context, portInfo *graftv1.PortInfo, opts ...portForwardOption) *activePortForward {
 	port := portInfo.GetPort()
 	protocol := portInfo.GetProtocol()
 	host := portInfo.GetHost()
+
+	var pfo portForwardOptions
+	for _, o := range opts {
+		o(&pfo)
+	}
+
+	localPort := port
+	if pfo.localPort != 0 {
+		localPort = pfo.localPort
+	}
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	fwdCtx, cancel := context.WithCancel(relayCtx)
 
 	fwd := &activePortForward{
 		remotePort:  port,
-		localPort:   port,
+		localPort:   localPort,
 		protocol:    protocol,
 		cancel:      cancel,
 		relayCancel: relayCancel,
+		explicit:    pfo.explicit,
 	}
 
-	if conflict, reason := probePortConflict(protocol, port); conflict {
+	if conflict, reason := probePortConflict(protocol, localPort); conflict {
 		fwd.conflict = true
 		fwd.conflictReason = reason
 
@@ -1023,7 +1213,7 @@ func (d *remoteDaemon) startPortForward(ctx context.Context, portInfo *graftv1.P
 	}
 
 	if protocol == "udp" {
-		addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", localPort))
 		if err != nil {
 			fwd.conflict = true
 			fwd.conflictReason = err.Error()
@@ -1037,7 +1227,7 @@ func (d *remoteDaemon) startPortForward(ctx context.Context, portInfo *graftv1.P
 		udpConn, err := net.ListenUDP("udp", addr)
 		if err != nil {
 			fwd.conflict = true
-			fwd.conflictReason = fmt.Sprintf("port %d already in use locally", port)
+			fwd.conflictReason = fmt.Sprintf("port %d already in use locally", localPort)
 
 			cancel()
 			relayCancel()
@@ -1057,10 +1247,10 @@ func (d *remoteDaemon) startPortForward(ctx context.Context, portInfo *graftv1.P
 	// TCP
 	var lc net.ListenConfig
 
-	listener, err := lc.Listen(fwdCtx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	listener, err := lc.Listen(fwdCtx, "tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {
 		fwd.conflict = true
-		fwd.conflictReason = fmt.Sprintf("port %d already in use locally", port)
+		fwd.conflictReason = fmt.Sprintf("port %d already in use locally", localPort)
 
 		cancel()
 		relayCancel()

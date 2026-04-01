@@ -28,7 +28,7 @@ func versionOutput() string {
 }
 
 func main() {
-	// Handle raw forwarder mode before CLI parsing - must bypass CLI framework
+	// Handle raw forwarder mode before CLI parsing; must bypass CLI framework
 	// for raw stdin/stdout forwarding to work correctly with remote daemon
 	if len(os.Args) >= 2 && os.Args[1] == "raw" {
 		var identity string

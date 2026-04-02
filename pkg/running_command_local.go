@@ -513,8 +513,13 @@ func makeCommandWrappedInShell(
 	rawCommand string,
 	arguments []string,
 	withSudo bool,
+	shellHookPrefix string,
 ) []string {
 	wrappedCmd := make([]string, 0, 1)
+	if shellHookPrefix != "" {
+		wrappedCmd = append(wrappedCmd, shellHookPrefix)
+	}
+
 	if len(cwd) != 0 {
 		wrappedCmd = append(wrappedCmd, fmt.Sprintf("cd %s && ", cwd))
 	}

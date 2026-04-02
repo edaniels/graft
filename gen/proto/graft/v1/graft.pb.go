@@ -1445,6 +1445,7 @@ func (*RemoveConnectionResponse) Descriptor() ([]byte, []int) {
 type DiscoverCommandsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AllowList     []string               `protobuf:"bytes,1,rep,name=allow_list,json=allowList,proto3" json:"allow_list,omitempty"` // only discover commands from this list, if specified; otherwise everything is fair game.
+	Directories   []string               `protobuf:"bytes,2,rep,name=directories,proto3" json:"directories,omitempty"`              // remote root directories to scan for env manager configs (e.g. mise, direnv).
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1482,6 +1483,13 @@ func (*DiscoverCommandsRequest) Descriptor() ([]byte, []int) {
 func (x *DiscoverCommandsRequest) GetAllowList() []string {
 	if x != nil {
 		return x.AllowList
+	}
+	return nil
+}
+
+func (x *DiscoverCommandsRequest) GetDirectories() []string {
+	if x != nil {
+		return x.Directories
 	}
 	return nil
 }
@@ -4119,10 +4127,11 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"-\n" +
 	"\x17RemoveConnectionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x1a\n" +
-	"\x18RemoveConnectionResponse\"8\n" +
+	"\x18RemoveConnectionResponse\"Z\n" +
 	"\x17DiscoverCommandsRequest\x12\x1d\n" +
 	"\n" +
-	"allow_list\x18\x01 \x03(\tR\tallowList\"6\n" +
+	"allow_list\x18\x01 \x03(\tR\tallowList\x12 \n" +
+	"\vdirectories\x18\x02 \x03(\tR\vdirectories\"6\n" +
 	"\x18DiscoverCommandsResponse\x12\x1a\n" +
 	"\bcommands\x18\x01 \x03(\tR\bcommands\"\x87\x01\n" +
 	"\x1cUpdateConnectionRootsRequest\x12'\n" +

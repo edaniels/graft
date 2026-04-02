@@ -115,6 +115,7 @@ func (mgr *ConnectionManager) createConnection(
 
 	conn := newConnection(daemon, name, localRoot, remoteRoot, background)
 	mgr.connections[name] = conn
+	mgr.updateDaemonRemoteRoots(daemon)
 	mgr.writeConnectionRootsFile()
 
 	return conn, nil
@@ -267,6 +268,22 @@ func (mgr *ConnectionManager) scheme(destURL *url.URL) (ConnectorFactory, error)
 	}
 
 	return scheme, nil
+}
+
+// updateDaemonRemoteRoots refreshes the remote root directories stored on a daemon
+// by scanning all connections that use it. Must be called with connMgrMu held.
+func (mgr *ConnectionManager) updateDaemonRemoteRoots(d *remoteDaemon) {
+	var roots []string
+
+	for _, conn := range mgr.connections {
+		if conn.lockedDaemon() == d {
+			if root := conn.RemoteRoot(); root != "" {
+				roots = append(roots, root)
+			}
+		}
+	}
+
+	d.remoteRoots.Store(&roots)
 }
 
 // Connections returns a snapshot of all connections, safe for concurrent iteration.
@@ -607,6 +624,7 @@ func (mgr *ConnectionManager) remove(ctx context.Context, name string, safely bo
 	mgr.connMgrMu.Lock()
 
 	delete(mgr.connections, name)
+	mgr.updateDaemonRemoteRoots(conn.daemon)
 	mgr.writeConnectionRootsFile()
 
 	// Decrement daemon ref count and destroy if last connection.

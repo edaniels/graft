@@ -419,50 +419,7 @@ func sanitizeContainerName(name string) string {
 func (env *e2eDockerEnv) startSSHContainer(t *testing.T) string {
 	t.Helper()
 
-	ctx := t.Context()
-	safeName := sanitizeContainerName("graft-e2e-ssh-" + t.Name())
-
-	runCmd := exec.CommandContext(ctx, "docker", "run", "-d",
-		"-p", "0:22",
-		"--name", safeName,
-		env.imageID,
-	)
-
-	out, err := runCmd.Output()
-	test.That(t, err, test.ShouldBeNil)
-
-	containerID := strings.TrimSpace(string(out))
-
-	t.Cleanup(func() {
-		//nolint:errcheck
-		exec.CommandContext(context.Background(), "docker", "rm", "-f", containerID).Run()
-	})
-
-	portCmd := exec.CommandContext(ctx, "docker", "port", containerID, "22")
-	portOut, err := portCmd.Output()
-	test.That(t, err, test.ShouldBeNil)
-
-	hostPort := strings.TrimSpace(string(portOut))
-	parts := strings.Split(hostPort, ":")
-	test.That(t, len(parts) >= 2, test.ShouldBeTrue)
-
-	sshPort := parts[len(parts)-1]
-
-	authKeysPath := filepath.Join(env.sshKeyDir, "authorized_keys")
-	cpCmd := exec.CommandContext(ctx, "docker", "cp", authKeysPath,
-		containerID+":/home/"+e2eContainerUser+"/.ssh/authorized_keys")
-	err = cpCmd.Run()
-	test.That(t, err, test.ShouldBeNil)
-
-	fixCmd := exec.CommandContext(ctx, "docker", "exec", containerID,
-		"chown", e2eContainerUser+":"+e2eContainerUser,
-		"/home/"+e2eContainerUser+"/.ssh/authorized_keys")
-	err = fixCmd.Run()
-	test.That(t, err, test.ShouldBeNil)
-
-	waitForSSH(t, containerID)
-
-	return sshPort
+	return env.startSSHContainerInfo(t).port
 }
 
 func waitForSSH(t *testing.T, containerID string) {
@@ -860,9 +817,16 @@ func TestConnectionReconnectE2E(t *testing.T) {
 func runCommandViaConnection(t *testing.T, conn *Connection, command string, args ...string) string {
 	t.Helper()
 
+	return runCommandViaConnectionInDir(t, conn, "", command, args...)
+}
+
+// runCommandViaConnectionInDir is like runCommandViaConnection but sets the working directory.
+func runCommandViaConnectionInDir(t *testing.T, conn *Connection, cwd, command string, args ...string) string {
+	t.Helper()
+
 	runningCmd, err := conn.RunCommand(
 		t.Context(),
-		"",    // cwd
+		cwd,
 		false, // shell
 		command,
 		args,
@@ -876,11 +840,6 @@ func runCommandViaConnection(t *testing.T, conn *Connection, command string, arg
 
 	test.That(t, runningCmd.Stdin().Close(), test.ShouldBeNil)
 
-	// Stdout must be drained concurrently with Wait, matching the production
-	// pattern in RunCommandGRPCServerHandler.Serve. The remote process()
-	// goroutine only closes the stdout pipe after sending the exit status on
-	// an unbuffered channel which Wait reads. So ReadAll (waiting for pipe
-	// close) and Wait (unblocking the pipe close) must run concurrently.
 	var (
 		stdout    []byte
 		stdoutErr error
@@ -902,4 +861,172 @@ func runCommandViaConnection(t *testing.T, conn *Connection, command string, arg
 	test.That(t, stdoutErr, test.ShouldBeNil)
 
 	return strings.TrimSpace(string(stdout))
+}
+
+// dockerExec runs a command inside a container.
+func dockerExec(t *testing.T, containerID string, cmd string) {
+	t.Helper()
+
+	execCmd := exec.CommandContext(t.Context(), "docker", "exec", containerID, "bash", "-c", cmd)
+	err := execCmd.Run()
+	test.That(t, err, test.ShouldBeNil)
+}
+
+// TestEnvProviderDiscoveryE2E verifies that the env provider system discovers
+// binaries from mise-managed PATH entries on a real remote via SSH, and that
+// newly added directories are picked up over time.
+func TestEnvProviderDiscoveryE2E(t *testing.T) {
+	requireDocker(t)
+	env := getOrSetupE2EEnv(t)
+
+	sc := env.startSSHContainerInfo(t)
+
+	// Install a fake mise binary that outputs env for /opt/tools/bin.
+	dockerExec(t, sc.containerID, `cat > /usr/local/bin/mise << 'SCRIPT'
+#!/bin/bash
+if [[ "$1" == "env" ]]; then
+    echo 'export PATH=/opt/tools/bin:'"$PATH"
+elif [[ "$1" == "hook-env" ]]; then
+    # Check if we're in a directory with a .mise.toml
+    dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/.mise.toml" ]; then
+            echo 'export PATH=/opt/tools/bin:'"$PATH"
+            exit 0
+        fi
+        dir=$(dirname "$dir")
+    done
+fi
+SCRIPT
+chmod +x /usr/local/bin/mise`)
+
+	// Create a test binary in /opt/tools/bin.
+	dockerExec(t, sc.containerID, `mkdir -p /opt/tools/bin && cat > /opt/tools/bin/graft-test-tool << 'SCRIPT'
+#!/bin/bash
+echo "hello-from-env-provider"
+SCRIPT
+chmod +x /opt/tools/bin/graft-test-tool`)
+
+	// Create a .mise.toml in a project directory so the provider detects config.
+	dockerExec(t, sc.containerID, `mkdir -p /home/testuser/project && cat > /home/testuser/project/.mise.toml << 'TOML'
+[tools]
+go = "1.22"
+TOML
+chown -R testuser:testuser /home/testuser/project`)
+
+	// Connect via SSH. The remote daemon starts, detects fake mise,
+	// and begins periodic Refresh for /home/testuser/project.
+	mgr := NewConnectionManager()
+	mgr.RegisterConnectorFactory(sshSchemeName, env.sshConnectorFactory(t))
+	t.Cleanup(mgr.Close)
+
+	connName := sanitizeContainerName("graft-e2e-envprov-" + t.Name())
+	destURL := env.sshDestURL(t, sc.port)
+
+	conn, err := mgr.Initialize(t.Context(), connName, destURL, t.TempDir(), "/home/testuser/project", "", false)
+	test.That(t, err, test.ShouldBeNil)
+
+	t.Cleanup(func() {
+		test.That(t, mgr.Remove(context.Background(), connName), test.ShouldBeNil)
+	})
+
+	state, _ := conn.State()
+	test.That(t, state, test.ShouldEqual, ConnectionStateConnected)
+
+	// Wait for graft-test-tool to appear in discovered commands.
+	// The DiscoverCommands loop runs every 1s and includes ExtraPATHDirs.
+	waitCtx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	found := make(chan struct{})
+
+	go func() {
+		for {
+			cmds := conn.daemon.AvailableCommands()
+			for _, cmd := range cmds {
+				if filepath.Base(cmd) == "graft-test-tool" {
+					close(found)
+
+					return
+				}
+			}
+
+			select {
+			case <-waitCtx.Done():
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}()
+
+	select {
+	case <-found:
+	case <-waitCtx.Done():
+		test.That(t, "graft-test-tool was not discovered via env provider within timeout", test.ShouldBeEmpty)
+	}
+
+	// Run the tool via the connection - it should be found and execute.
+	output := runCommandViaConnectionInDir(t, conn, "/home/testuser/project", "graft-test-tool")
+	test.That(t, output, test.ShouldEqual, "hello-from-env-provider")
+
+	// Phase 2: add a second tool directory. Update fake mise to include it.
+	dockerExec(t, sc.containerID, `mkdir -p /opt/extra/bin && cat > /opt/extra/bin/graft-extra-tool << 'SCRIPT'
+#!/bin/bash
+echo "hello-from-extra"
+SCRIPT
+chmod +x /opt/extra/bin/graft-extra-tool`)
+
+	dockerExec(t, sc.containerID, `cat > /usr/local/bin/mise << 'SCRIPT'
+#!/bin/bash
+if [[ "$1" == "env" ]]; then
+    echo 'export PATH=/opt/tools/bin:/opt/extra/bin:'"$PATH"
+elif [[ "$1" == "hook-env" ]]; then
+    dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/.mise.toml" ]; then
+            echo 'export PATH=/opt/tools/bin:/opt/extra/bin:'"$PATH"
+            exit 0
+        fi
+        dir=$(dirname "$dir")
+    done
+fi
+SCRIPT
+chmod +x /usr/local/bin/mise`)
+
+	// Touch the .mise.toml to trigger mtime-based cache invalidation.
+	dockerExec(t, sc.containerID, `touch /home/testuser/project/.mise.toml`)
+
+	// Wait for the extra tool to be discovered.
+	waitCtx2, cancel2 := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel2()
+
+	found2 := make(chan struct{})
+
+	go func() {
+		for {
+			cmds := conn.daemon.AvailableCommands()
+			for _, cmd := range cmds {
+				if filepath.Base(cmd) == "graft-extra-tool" {
+					close(found2)
+
+					return
+				}
+			}
+
+			select {
+			case <-waitCtx2.Done():
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}()
+
+	select {
+	case <-found2:
+	case <-waitCtx2.Done():
+		test.That(t, "graft-extra-tool was not discovered after mise update within timeout", test.ShouldBeEmpty)
+	}
+
+	output = runCommandViaConnectionInDir(t, conn, "/home/testuser/project", "graft-extra-tool")
+	test.That(t, output, test.ShouldEqual, "hello-from-extra")
 }

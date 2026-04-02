@@ -40,6 +40,7 @@ type Server struct {
 	rootConfigPath         string
 	sockPath               string
 	pidPath                string
+	envProviders           *EnvProviderSet
 	activeWorkers          sync.WaitGroup
 	syncProtoNum           int
 	serverMu               sync.Mutex
@@ -64,8 +65,9 @@ func NewServer(
 	identity string,
 ) (*Server, error) {
 	var (
-		connMgr *ConnectionManager
-		sessMgr *SessionManager
+		connMgr      *ConnectionManager
+		sessMgr      *SessionManager
+		envProviders *EnvProviderSet
 	)
 
 	switch role {
@@ -84,6 +86,8 @@ func NewServer(
 		}
 	case ServerRoleRemote:
 		// Remote daemons track ports opened by commands they run.
+		// Remote daemons detect directory-aware env managers (e.g. mise).
+		envProviders = NewEnvProviderSet()
 	default:
 		return nil, errors.WrapSuffix(errUnknownServerRole, role.String())
 	}
@@ -138,6 +142,7 @@ func NewServer(
 		identity:       identity,
 		connMgr:        connMgr,
 		sessMgr:        sessMgr,
+		envProviders:   envProviders,
 		rootConfig:     config,
 		rootConfigPath: rootConfigPath,
 		sockPath:       sockPath,

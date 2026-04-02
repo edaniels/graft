@@ -40,10 +40,11 @@ func DumpGoroutines() {
 }
 
 // collectCommandsFromPATH searches each component of the current user's PATH and returns
-// all executables.
+// all executables. extraPathDirs are additional directories (e.g. from env managers like
+// mise) to scan beyond the shell's PATH.
 // TODO(erd): this needs to be dynamic as the PATH changes based on user selected shell
 // and corresponding profiles. Can probably just do a shell printenv PATH command.
-func collectCommandsFromPATH() []string {
+func collectCommandsFromPATH(extraPathDirs ...string) []string {
 	shellVar, shellPathVar := os.LookupEnv("SHELL")
 	if !shellPathVar {
 		shellVar = defaultShellPath
@@ -64,32 +65,42 @@ func collectCommandsFromPATH() []string {
 
 	var collected []string
 
+	// Scan extra PATH dirs first so env-manager-provided commands appear.
+	for _, pathElem := range extraPathDirs {
+		collectExecutablesFromDir(pathElem, seen, &collected)
+	}
+
 	for pathElem := range strings.SplitSeq(pathVar, ":") {
-		entries, err := os.ReadDir(pathElem)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				slog.Debug("error reading directory", "for", pathElem, "error", err)
-			}
-
-			continue
-		}
-
-		for _, entry := range entries {
-			if entry.Type().IsDir() ||
-				seen[entry.Name()] {
-				continue
-			}
-
-			if info, err := entry.Info(); err != nil || info.Mode()&0o111 == 0 {
-				// file not executable
-				continue
-			}
-
-			seen[entry.Name()] = true
-
-			collected = append(collected, filepath.Join(pathElem, entry.Name()))
-		}
+		collectExecutablesFromDir(pathElem, seen, &collected)
 	}
 
 	return collected
+}
+
+// collectExecutablesFromDir scans a directory for executable files and appends them
+// to collected, skipping names already in seen.
+func collectExecutablesFromDir(dir string, seen map[string]bool, collected *[]string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			slog.Debug("error reading directory", "for", dir, "error", err)
+		}
+
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.Type().IsDir() ||
+			seen[entry.Name()] {
+			continue
+		}
+
+		if info, err := entry.Info(); err != nil || info.Mode()&0o111 == 0 {
+			continue
+		}
+
+		seen[entry.Name()] = true
+
+		*collected = append(*collected, filepath.Join(dir, entry.Name()))
+	}
 }

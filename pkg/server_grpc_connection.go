@@ -425,7 +425,17 @@ func (srv *Server) DiscoverCommands(req *graftv1.DiscoverCommandsRequest, server
 	}
 
 	for {
-		commands := collectCommandsFromPATH()
+		// Periodic refresh for known directories via env providers.
+		if srv.envProviders != nil && len(req.GetDirectories()) > 0 {
+			srv.envProviders.Refresh(server.Context(), req.GetDirectories())
+		}
+
+		var extraPathDirs []string
+		if srv.envProviders != nil {
+			extraPathDirs = srv.envProviders.ExtraPATHDirs()
+		}
+
+		commands := collectCommandsFromPATH(extraPathDirs...)
 		if !slices.Equal(knownCommands, commands) {
 			knownCommands = commands
 

@@ -250,11 +250,20 @@ func (srv *Server) runLocalCommand(ctx context.Context, cmdReq *graftv1.StartCom
 		return nil, err
 	}
 
+	// For non-shell commands, prepend a DEBUG trap that re-evaluates env
+	// managers (e.g. mise) before every simple command. This makes env
+	// activation directory-aware even in compound commands like
+	// "cd / && which go" without fragile command string parsing.
+	var shellHookPrefix string
+	if !cmdReq.GetShell() && srv.envProviders != nil {
+		shellHookPrefix = srv.envProviders.ShellHookPrefix()
+	}
+
 	var cmd []string
 	if cmdReq.GetShell() {
 		cmd = makeShellCommand(shellPath, cmdReq.GetCwd())
 	} else {
-		cmd = makeCommandWrappedInShell(shellPath, cmdReq.GetCwd(), cmdReq.GetCommand(), cmdReq.GetArguments(), cmdReq.GetSudo())
+		cmd = makeCommandWrappedInShell(shellPath, cmdReq.GetCwd(), cmdReq.GetCommand(), cmdReq.GetArguments(), cmdReq.GetSudo(), shellHookPrefix)
 	}
 
 	var extraEnv []string
@@ -271,6 +280,12 @@ func (srv *Server) runLocalCommand(ctx context.Context, cmdReq *graftv1.StartCom
 	}
 
 	srv.serverMu.Unlock()
+
+	// Set trust env for all commands (including shells) so mise configs
+	// in connection root directories are auto-trusted.
+	if srv.envProviders != nil {
+		extraEnv = append(extraEnv, srv.envProviders.TrustEnv()...)
+	}
 
 	extraEnv = append(extraEnv, cmdReq.GetExtraEnv()...)
 

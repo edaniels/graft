@@ -318,6 +318,65 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 	test.That(t, string(data), test.ShouldEqual, "/home/user/project\tdev\n")
 }
 
+func TestUpdateDaemonRemoteRoots(t *testing.T) {
+	t.Run("populated on connection creation", func(t *testing.T) {
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+
+		_, err := mgr.createConnection("conn1", "/local", "/remote/project", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		roots := daemon.remoteRoots.Load()
+		test.That(t, roots, test.ShouldNotBeNil)
+		test.That(t, len(*roots), test.ShouldEqual, 1)
+		test.That(t, (*roots)[0], test.ShouldEqual, "/remote/project")
+	})
+
+	t.Run("accumulates across multiple connections on same daemon", func(t *testing.T) {
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+
+		_, err := mgr.createConnection("conn1", "/local1", "/remote/project1", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		_, err = mgr.createConnection("conn2", "/local2", "/remote/project2", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		roots := daemon.remoteRoots.Load()
+		test.That(t, roots, test.ShouldNotBeNil)
+		test.That(t, len(*roots), test.ShouldEqual, 2)
+
+		rootSet := map[string]bool{}
+		for _, r := range *roots {
+			rootSet[r] = true
+		}
+
+		test.That(t, rootSet["/remote/project1"], test.ShouldBeTrue)
+		test.That(t, rootSet["/remote/project2"], test.ShouldBeTrue)
+	})
+
+	t.Run("skips empty remote roots", func(t *testing.T) {
+		mgr := NewConnectionManager()
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{})
+		daemon.runCtx = mgr.runCtx
+
+		_, err := mgr.createConnection("conn1", "/local", "", daemon, false)
+		test.That(t, err, test.ShouldBeNil)
+
+		roots := daemon.remoteRoots.Load()
+		test.That(t, roots, test.ShouldNotBeNil)
+		test.That(t, *roots, test.ShouldBeEmpty)
+	})
+}
+
 func TestConnectionByCWDSkipsBackground(t *testing.T) {
 	localRoot := t.TempDir()
 	subDir := filepath.Join(localRoot, "src")

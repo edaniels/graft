@@ -312,6 +312,7 @@ message RemoveConnectionResponse {}
 
 message DiscoverCommandsRequest {
   repeated string allow_list = 1; // only discover commands from this list, if specified; otherwise everything is fair game.
+  repeated string directories = 2; // remote root directories to scan for env manager configs (e.g. mise, direnv).
 }
 
 message DiscoverCommandsResponse {

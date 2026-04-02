@@ -66,6 +66,7 @@ type remoteDaemon struct {
 	portForwards      map[string]*activePortForward
 	explicitPorts     map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
 
+	remoteRoots       atomic.Pointer[[]string]
 	availableCommands atomic.Pointer[[]string]
 	activeWorkers     sync.WaitGroup
 
@@ -910,7 +911,14 @@ func (d *remoteDaemon) monitor() {
 
 		remClient := graftv1.NewGraftServiceClient(cc)
 
-		commandsClient, err := remClient.DiscoverCommands(cancelCtx, &graftv1.DiscoverCommandsRequest{AllowList: nil})
+		var directories []string
+		if roots := d.remoteRoots.Load(); roots != nil {
+			directories = *roots
+		}
+
+		commandsClient, err := remClient.DiscoverCommands(cancelCtx, &graftv1.DiscoverCommandsRequest{
+			Directories: directories,
+		})
 		if err != nil {
 			slog.ErrorContext(cancelCtx, "error starting DiscoverCommands", "error", err)
 

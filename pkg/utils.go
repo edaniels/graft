@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/term"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -405,4 +407,50 @@ func ResolveConnectionName(name, os string) string {
 	}
 
 	return name
+}
+
+// flushingWriter wraps a writer and tracks how many visual terminal rows
+// have been consumed, accounting for line wrapping based on terminal width.
+// Flush moves the cursor back to the start of the tracked output and clears it.
+type flushingWriter struct {
+	io.WriteCloser
+	termWidth int
+	rows      int
+	col       int
+}
+
+func newFlushingWriter(w io.WriteCloser) *flushingWriter {
+	termWidth, _, _ := term.GetSize(int(os.Stderr.Fd()))
+
+	return &flushingWriter{WriteCloser: w, termWidth: termWidth}
+}
+
+func (w *flushingWriter) Write(p []byte) (int, error) {
+	for _, b := range p {
+		switch b {
+		case '\n':
+			w.rows++
+			w.col = 0
+		case '\r':
+			w.col = 0
+		default:
+			w.col++
+			if w.termWidth > 0 && w.col >= w.termWidth {
+				w.rows++
+				w.col = 0
+			}
+		}
+	}
+
+	return w.WriteCloser.Write(p)
+}
+
+// Flush moves the cursor up to the start of the previously written output and clears it.
+func (w *flushingWriter) Flush() {
+	if w.rows > 0 {
+		fmt.Fprintf(w.WriteCloser, "\033[%dA\033[J", w.rows)
+	}
+
+	w.rows = 0
+	w.col = 0
 }

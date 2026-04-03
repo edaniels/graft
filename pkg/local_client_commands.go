@@ -224,10 +224,11 @@ func (client *LocalClient) PrintDaemonStatus(ctx context.Context, connectionName
 	return nil
 }
 
-// WatchFn polls the watchFn every second, overwriting any printed output until the context is cancelled.
-func (client *LocalClient) WatchFn(ctx context.Context, watchFn func(context.Context) error) error {
+// Watch polls the watchFn every second, overwriting any printed output until the context is cancelled.
+func (client *LocalClient) Watch(ctx context.Context, watchFn func(context.Context) error) error {
 	fw := newFlushingWriter(client.errWriter)
 	client.errWriter = fw
+
 	defer func() { client.errWriter = fw.WriteCloser }()
 
 	ticker := time.NewTicker(time.Second)

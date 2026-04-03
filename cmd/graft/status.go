@@ -20,7 +20,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		if statusWatch {
-			return client.WatchFn(ctx, printFn)
+			return client.Watch(ctx, printFn)
 		}
 
 		return printFn(ctx)

@@ -414,13 +414,17 @@ func ResolveConnectionName(name, os string) string {
 // Flush moves the cursor back to the start of the tracked output and clears it.
 type flushingWriter struct {
 	io.WriteCloser
+
 	termWidth int
 	rows      int
 	col       int
 }
 
 func newFlushingWriter(w io.WriteCloser) *flushingWriter {
-	termWidth, _, _ := term.GetSize(int(os.Stderr.Fd()))
+	termWidth, _, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil {
+		termWidth = 0
+	}
 
 	return &flushingWriter{WriteCloser: w, termWidth: termWidth}
 }
@@ -442,7 +446,12 @@ func (w *flushingWriter) Write(p []byte) (int, error) {
 		}
 	}
 
-	return w.WriteCloser.Write(p)
+	n, err := w.WriteCloser.Write(p)
+	if err != nil {
+		return n, errors.Wrap(err)
+	}
+
+	return n, nil
 }
 
 // Flush moves the cursor up to the start of the previously written output and clears it.

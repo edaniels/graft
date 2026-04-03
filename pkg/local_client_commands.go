@@ -224,22 +224,52 @@ func (client *LocalClient) PrintDaemonStatus(ctx context.Context, connectionName
 	return nil
 }
 
+// visualRowWriter wraps a writer and tracks how many visual terminal rows
+// have been consumed, accounting for line wrapping based on terminal width.
+type visualRowWriter struct {
+	io.WriteCloser
+	termWidth int
+	rows      int
+	col       int 
+}
+
+func (w *visualRowWriter) Write(p []byte) (int, error) {
+	for _, b := range p {
+		if b == '\n' {
+			w.rows++
+			w.col = 0
+		} else if b == '\r' {
+			w.col = 0
+		} else {
+			w.col++
+			if w.termWidth > 0 && w.col >= w.termWidth {
+				w.rows++
+				w.col = 0
+			}
+		}
+	}
+
+	return w.WriteCloser.Write(p)
+}
+
 // WatchFn polls the watchFn every second, overwriting any printed output until the context is cancelled.
 func (client *LocalClient) WatchFn(ctx context.Context, watchFn func(context.Context) error) error {
+	termWidth, _, _ := term.GetSize(int(os.Stderr.Fd()))
+
+	counter := &visualRowWriter{WriteCloser: client.errWriter, termWidth: termWidth}
+	client.errWriter = counter
+	defer func() { client.errWriter = counter.WriteCloser }()
+
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	// Save cursor position before first print.
-	fmt.Fprint(client.errWriter, "\0337")
-
-	first := true
-
 	for {
-		if !first {
-			// Restore saved cursor position + clear everything below.
-			fmt.Fprint(client.errWriter, "\0338\033[J")
+		// Move cursor up to overwrite previous output.
+		for range counter.rows {
+			fmt.Fprint(counter.WriteCloser, "\033[A\033[2K")
 		}
-		first = false
+		counter.rows = 0
+		counter.col = 0
 
 		if err := watchFn(ctx); err != nil {
 			if errors.Is(context.Cause(ctx), context.Canceled) {

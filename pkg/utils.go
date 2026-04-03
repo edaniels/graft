@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/term"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -405,4 +407,53 @@ func ResolveConnectionName(name, os string) string {
 	}
 
 	return name
+}
+
+// flushingWriter wraps a writer and tracks how many visual terminal rows
+// have been consumed, accounting for line wrapping based on terminal width.
+type flushingWriter struct {
+	w         io.Writer
+	termWidth int
+	rows      int
+	col       int
+}
+
+func newFlushingWriter(w io.Writer) *flushingWriter {
+	termWidth, _, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil {
+		termWidth = 0
+	}
+
+	return &flushingWriter{w: w, termWidth: termWidth}
+}
+
+// Write writes s to the underlying writer and tracks the visual rows consumed.
+func (fw *flushingWriter) Write(s string) {
+	for _, b := range []byte(s) {
+		switch b {
+		case '\n':
+			fw.rows++
+			fw.col = 0
+		case '\r':
+			fw.col = 0
+		default:
+			fw.col++
+			if fw.termWidth > 0 && fw.col >= fw.termWidth {
+				fw.rows++
+				fw.col = 0
+			}
+		}
+	}
+
+	fmt.Fprint(fw.w, s)
+}
+
+// Flush moves the cursor up to the start of the previously written output and clears it.
+func (fw *flushingWriter) Flush() {
+	if fw.rows > 0 {
+		fmt.Fprintf(fw.w, "\033[%dA\033[J", fw.rows)
+	}
+
+	fw.rows = 0
+	fw.col = 0
 }

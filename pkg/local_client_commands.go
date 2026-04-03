@@ -54,8 +54,8 @@ func (client *LocalClient) sessionPID() (uint64, bool) {
 	return sessPID, true
 }
 
-// PrintStatus prints the status of each connection.
-func (client *LocalClient) PrintStatus(ctx context.Context) error {
+// GetStatus returns the formatted status string for each connection.
+func (client *LocalClient) GetStatus(ctx context.Context) (string, error) {
 	req := &graftv1.ListConnectionsRequest{}
 
 	sessPID, sessPIDOk := client.sessionPID()
@@ -65,16 +65,18 @@ func (client *LocalClient) PrintStatus(ctx context.Context) error {
 
 	resp, err := client.ListConnections(ctx, req)
 	if err != nil {
-		return client.handleError(err)
+		return "", client.handleError(err)
 	}
+
+	var buf strings.Builder
 
 	if len(resp.GetConnections()) == 0 {
-		fmt.Fprintln(client.errWriter, "No connections 😎")
+		buf.WriteString("No connections 😎\n")
 
-		return nil
+		return buf.String(), nil
 	}
 
-	fmt.Fprintln(client.errWriter, "Connections:")
+	buf.WriteString("Connections:\n")
 
 	connNames := make([]string, 0, len(resp.GetConnections()))
 	for name := range resp.GetConnections() {
@@ -85,55 +87,67 @@ func (client *LocalClient) PrintStatus(ctx context.Context) error {
 
 	for _, name := range connNames {
 		status := resp.GetConnections()[name]
-		fmt.Fprintf(client.errWriter, "%s (%s)", name, status.GetSafeDestination())
+		fmt.Fprintf(&buf, "%s (%s)", name, status.GetSafeDestination())
 
 		if reason := status.GetStateReason(); reason != "" {
-			fmt.Fprintf(client.errWriter, " (%s: %s)", connectionStateDisplayString(status.GetState()), reason)
+			fmt.Fprintf(&buf, " (%s: %s)", connectionStateDisplayString(status.GetState()), reason)
 		} else {
-			fmt.Fprintf(client.errWriter, " (%s)", connectionStateDisplayString(status.GetState()))
+			fmt.Fprintf(&buf, " (%s)", connectionStateDisplayString(status.GetState()))
 		}
 
 		if status.GetCurrent() {
-			fmt.Fprint(client.errWriter, " [current]")
+			buf.WriteString(" [current]")
 		}
 
 		hasSyncs := len(status.GetSyncStatuses()) != 0
 		hasPorts := len(status.GetPortForwardStatuses()) != 0
 
 		if hasSyncs || hasPorts {
-			fmt.Fprint(client.errWriter, ":")
+			buf.WriteString(":")
 		}
 
 		for _, syncStatus := range status.GetSyncStatuses() {
-			fmt.Fprintf(client.errWriter, "\n  Synchronizing %s -> %s", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
+			fmt.Fprintf(&buf, "\n  Synchronizing %s -> %s", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
 
 			indented := strings.ReplaceAll(formatSyncStatusDescription(syncStatus), "\n", "\n    ")
-			fmt.Fprintf(client.errWriter, "\n    %s", indented)
+			fmt.Fprintf(&buf, "\n    %s", indented)
 		}
 
 		for _, pf := range status.GetPortForwardStatuses() {
 			if pf.GetConflict() {
-				fmt.Fprintf(client.errWriter, "\n  %s %s %d: %s",
+				fmt.Fprintf(&buf, "\n  %s %s %d: %s",
 					color.RedString("CONFLICT"),
 					pf.GetProtocol(),
 					pf.GetRemotePort(),
 					pf.GetConflictReason())
 			} else {
-				fmt.Fprintf(client.errWriter, "\n  Forwarding %s localhost:%d -> remote:%d",
+				fmt.Fprintf(&buf, "\n  Forwarding %s localhost:%d -> remote:%d",
 					pf.GetProtocol(),
 					pf.GetLocalPort(),
 					pf.GetRemotePort())
 			}
 		}
 
-		fmt.Fprintln(client.errWriter)
+		buf.WriteString("\n")
 	}
+
+	return buf.String(), nil
+}
+
+// PrintStatus prints the status of each connection.
+func (client *LocalClient) PrintStatus(ctx context.Context) error {
+	s, err := client.GetStatus(ctx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprint(client.errWriter, s)
 
 	return nil
 }
 
-// PrintStatusJSON prints the status of each connection as JSON to stdout.
-func (client *LocalClient) PrintStatusJSON(ctx context.Context) error {
+// GetStatusJSON returns the status of each connection as a JSON string.
+func (client *LocalClient) GetStatusJSON(ctx context.Context) (string, error) {
 	req := &graftv1.ListConnectionsRequest{}
 
 	sessPID, sessPIDOk := client.sessionPID()
@@ -143,7 +157,7 @@ func (client *LocalClient) PrintStatusJSON(ctx context.Context) error {
 
 	resp, err := client.ListConnections(ctx, req)
 	if err != nil {
-		return client.handleError(err)
+		return "", client.handleError(err)
 	}
 
 	marshaler := protojson.MarshalOptions{
@@ -152,17 +166,20 @@ func (client *LocalClient) PrintStatusJSON(ctx context.Context) error {
 
 	data, err := marshaler.Marshal(resp)
 	if err != nil {
-		return errors.WrapPrefix(err, "marshaling status to JSON")
+		return "", errors.WrapPrefix(err, "marshaling status to JSON")
 	}
 
-	_, err = client.outWriter.Write(data)
+	return string(data) + "\n", nil
+}
+
+// PrintStatusJSON prints the status of each connection as JSON to stdout.
+func (client *LocalClient) PrintStatusJSON(ctx context.Context) error {
+	s, err := client.GetStatusJSON(ctx)
 	if err != nil {
-		return errors.WrapPrefix(err, "writing JSON output")
+		return err
 	}
 
-	if _, err = client.outWriter.Write([]byte("\n")); err != nil {
-		return errors.WrapPrefix(err, "writing JSON newline")
-	}
+	fmt.Fprint(client.outWriter, s)
 
 	return nil
 }
@@ -222,6 +239,34 @@ func (client *LocalClient) PrintDaemonStatus(ctx context.Context, connectionName
 	}
 
 	return nil
+}
+
+// Watch polls getFn every second, overwriting any printed output until the context is cancelled.
+func (client *LocalClient) Watch(ctx context.Context, getFn func(context.Context) (string, error)) error {
+	fw := newFlushingWriter(client.errWriter)
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		s, err := getFn(ctx)
+		if err != nil {
+			if errors.Is(context.Cause(ctx), context.Canceled) {
+				return nil
+			}
+
+			return err
+		}
+
+		fw.Flush()
+		fw.Write(s)
+
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }
 
 // RemoveConnection removes and potenitally tears down the daemon bound to the given connection name.

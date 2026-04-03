@@ -144,8 +144,8 @@ echo "$TAG" > "$VERSION_FILE"
 say "Generating release notes..."
 NOTES_FILE="${BIN_DIR}/release-notes.txt"
 
-# Find previous release tag for changelog.
-PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null)" || true
+git fetch --tags --quiet
+PREV_TAG="$(git tag --list 'v[0-9]*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$' | grep -v "^${TAG}$" | head -n 1)" || true
 
 if [ -n "$PREV_TAG" ]; then
     say "Changelog: ${PREV_TAG}..${TAG}"

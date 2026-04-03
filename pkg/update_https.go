@@ -2,7 +2,6 @@ package graft
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -31,11 +30,10 @@ func NewHTTPSReleaseClient(baseURL string) *HTTPSReleaseClient {
 	}
 }
 
-// LatestVersion fetches the latest version string from the server.
 func (h *HTTPSReleaseClient) LatestVersion(ctx context.Context) (string, error) {
 	url := h.baseURL + "/latest"
 
-	data, err := h.get(ctx, url, 1024)
+	data, err := httpGet(ctx, h.client, url, maxVersionSize)
 	if err != nil {
 		return "", errors.WrapPrefix(err, "fetching latest version")
 	}
@@ -43,11 +41,10 @@ func (h *HTTPSReleaseClient) LatestVersion(ctx context.Context) (string, error) 
 	return strings.TrimSpace(string(data)), nil
 }
 
-// DownloadChecksums downloads the checksums.txt for the given version.
 func (h *HTTPSReleaseClient) DownloadChecksums(ctx context.Context, version string) ([]byte, error) {
 	url := h.baseURL + "/" + version + "/checksums.txt"
 
-	data, err := h.get(ctx, url, maxReleaseDownloadSize)
+	data, err := httpGet(ctx, h.client, url, maxReleaseDownloadSize)
 	if err != nil {
 		return nil, errors.WrapPrefix(err, "downloading checksums")
 	}
@@ -55,11 +52,10 @@ func (h *HTTPSReleaseClient) DownloadChecksums(ctx context.Context, version stri
 	return data, nil
 }
 
-// DownloadBinary downloads the release binary to destPath.
 func (h *HTTPSReleaseClient) DownloadBinary(ctx context.Context, version, binaryName, destPath string) error {
 	url := h.baseURL + "/" + version + "/" + binaryName
 
-	data, err := h.get(ctx, url, maxReleaseDownloadSize)
+	data, err := httpGet(ctx, h.client, url, maxReleaseDownloadSize)
 	if err != nil {
 		return errors.WrapPrefix(err, "downloading binary")
 	}
@@ -71,43 +67,13 @@ func (h *HTTPSReleaseClient) DownloadBinary(ctx context.Context, version, binary
 	return nil
 }
 
-const maxReleaseNotesSize = 1 << 20 // 1 MB
-
 func (h *HTTPSReleaseClient) ReleaseNotes(ctx context.Context, version string) (string, error) {
 	url := h.baseURL + "/" + version + "/release-notes.txt"
 
-	data, err := h.get(ctx, url, maxReleaseNotesSize)
+	data, err := httpGet(ctx, h.client, url, maxReleaseNotesSize)
 	if err != nil {
 		return "", errors.WrapPrefix(err, "fetching release notes")
 	}
 
 	return strings.TrimSpace(string(data)), nil
-}
-
-func (h *HTTPSReleaseClient) get(ctx context.Context, url string, maxSize int64) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, errors.Wrap(err)
-	}
-
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return nil, errors.Wrap(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.Errorf("%s: %d %s", url, resp.StatusCode, http.StatusText(resp.StatusCode))
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
-	if err != nil {
-		return nil, errors.Wrap(err)
-	}
-
-	if int64(len(data)) > maxSize {
-		return nil, errors.Errorf("%s: response too large (>%d bytes)", url, maxSize)
-	}
-
-	return data, nil
 }

@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,10 +37,43 @@ func ReleaseClientFromConfig() ReleaseClient {
 		return NewHTTPSReleaseClient(defaultUpdateURL)
 	}
 
-	return NewGitHubReleaseClient(GithubToken())
+	return NewGitHubReleaseClient()
 }
 
-const maxReleaseDownloadSize = 256 << 20 // 256 MB
+const (
+	maxReleaseDownloadSize = 256 << 20 // 256 MB
+	maxReleaseNotesSize    = 1 << 20   // 1 MB
+	maxVersionSize         = 1024
+)
+
+// httpGet fetches a URL with size limits, shared by both release client implementations.
+func httpGet(ctx context.Context, client *http.Client, url string, maxSize int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Wrap(err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.Errorf("%s: %d %s", url, resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
+	if err != nil {
+		return nil, errors.Wrap(err)
+	}
+
+	if int64(len(data)) > maxSize {
+		return nil, errors.Errorf("%s: response too large (>%d bytes)", url, maxSize)
+	}
+
+	return data, nil
+}
 
 // ReleaseClient abstracts how release artifacts are fetched, allowing
 // both GitHub Releases and plain HTTPS servers to share the same

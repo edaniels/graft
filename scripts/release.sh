@@ -137,6 +137,24 @@ rm -f "$CHECKSUMS_FILE"
     done
 )
 
+say "Generating version.txt..."
+VERSION_FILE="${BIN_DIR}/version.txt"
+echo "$TAG" > "$VERSION_FILE"
+
+say "Generating release notes..."
+NOTES_FILE="${BIN_DIR}/release-notes.txt"
+
+# Find previous release tag for changelog.
+PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null)" || true
+
+if [ -n "$PREV_TAG" ]; then
+    say "Changelog: ${PREV_TAG}..${TAG}"
+    git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${TAG}" > "$NOTES_FILE"
+else
+    say "First release - using recent commits"
+    git log --pretty=format:"- %s (%h)" -20 > "$NOTES_FILE"
+fi
+
 say "Creating GitHub release ${TAG}..."
 
 say "Uploading release assets..."
@@ -153,7 +171,9 @@ if ! gh release create "$TAG" \
     "${BIN_DIR}/graft-linux-amd64" \
     "${BIN_DIR}/graft-linux-arm64" \
     "${BIN_DIR}/graft-darwin-arm64" \
-    "${CHECKSUMS_FILE}"; then
+    "${CHECKSUMS_FILE}" \
+    "${VERSION_FILE}" \
+    "${NOTES_FILE}"; then
     err "Failed to create release"
 fi
 

@@ -92,90 +92,46 @@ verify_checksum() {
     fi
 }
 
-# Download file using curl or wget (with optional auth header)
-github_download() {
+# Download file using curl or wget
+download() {
     url="$1"
     output="$2"
-    auth_header=""
-
-    if [ -n "$GITHUB_TOKEN" ]; then
-        auth_header="Authorization: token $GITHUB_TOKEN"
-    fi
 
     if command -v curl >/dev/null 2>&1; then
-        if [ -n "$auth_header" ]; then
-            if ! curl -fsSL -H "$auth_header" -H "Accept: application/octet-stream" -o "$output" "$url"; then
-                err "Failed to download: $url"
-            fi
-        else
-            if ! curl -fsSL -H "Accept: application/octet-stream" -o "$output" "$url"; then
-                err "Failed to download: $url"
-            fi
+        if ! curl -fsSL -o "$output" "$url"; then
+            err "Failed to download: $url"
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if [ -n "$auth_header" ]; then
-            if ! wget -q --header="$auth_header" --header="Accept: application/octet-stream" -O "$output" "$url"; then
-                err "Failed to download: $url"
-            fi
-        else
-            if ! wget -q --header="Accept: application/octet-stream" -O "$output" "$url"; then
-                err "Failed to download: $url"
-            fi
+        if ! wget -q -O "$output" "$url"; then
+            err "Failed to download: $url"
         fi
     else
         err "need 'curl' or 'wget' (neither found)"
     fi
 }
 
-# Download JSON from GitHub API
-github_download_json() {
-    url="$1"
-    auth_header=""
-
-    if [ -n "$GITHUB_TOKEN" ]; then
-        auth_header="Authorization: token $GITHUB_TOKEN"
-    fi
-
-    if command -v curl >/dev/null 2>&1; then
-        if [ -n "$auth_header" ]; then
-            curl -fsSL -H "$auth_header" -H "Accept: application/vnd.github+json" "$url"
-        else
-            curl -fsSL -H "Accept: application/vnd.github+json" "$url"
-        fi
-    elif command -v wget >/dev/null 2>&1; then
-        if [ -n "$auth_header" ]; then
-            wget -q --header="$auth_header" --header="Accept: application/vnd.github+json" -O - "$url"
-        else
-            wget -q --header="Accept: application/vnd.github+json" -O - "$url"
-        fi
-    else
-        err "need 'curl' or 'wget' (neither found)"
-    fi
-}
-
-# Get the latest release tag from GitHub
+# Get the latest release tag from GitHub using the direct download URL
+# (avoids API rate limits).
 github_get_latest_version() {
-    api_url="https://api.github.com/repos/${REPO}/releases/latest"
-    response="$(github_download_json "$api_url" 2>/dev/null)" || err "Failed to fetch latest release."
+    url="https://github.com/${REPO}/releases/latest/download/version.txt"
 
-    echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+    if command -v curl >/dev/null 2>&1; then
+        version="$(curl -fsSL "$url" 2>/dev/null)" || err "Failed to fetch latest release."
+    elif command -v wget >/dev/null 2>&1; then
+        version="$(wget -q -O - "$url" 2>/dev/null)" || err "Failed to fetch latest release."
+    else
+        err "need 'curl' or 'wget' (neither found)"
+    fi
+
+    echo "$version" | tr -d '[:space:]'
 }
 
-# Get asset download URL from GitHub release
+# Get asset download URL from GitHub release (direct URL, no API).
 github_get_asset_url() {
     tag="$1"
     asset_name="$2"
 
-    api_url="https://api.github.com/repos/${REPO}/releases/tags/${tag}"
-    response="$(github_download_json "$api_url" 2>/dev/null)" || err "Failed to fetch release ${tag}"
-
-    asset_id="$(echo "$response" | grep -B5 "\"name\"[[:space:]]*:[[:space:]]*\"${asset_name}\"" | grep '"id"' | head -1 | sed 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/')"
-
-    if [ -z "$asset_id" ]; then
-        err "Asset not found: $asset_name"
-    fi
-
-    echo "https://api.github.com/repos/${REPO}/releases/assets/${asset_id}"
+    echo "https://github.com/${REPO}/releases/download/${tag}/${asset_name}"
 }
 
 show_help() {
@@ -232,9 +188,6 @@ main() {
         esac
     done
 
-    # Use token if available (for higher rate limits).
-    GITHUB_TOKEN="${GRAFT_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
-
     # Detect platform
     OS="$(detect_os)"
     ARCH="$(detect_arch)"
@@ -274,11 +227,11 @@ main() {
     # Download checksums and binary
     say "Downloading checksums..."
     CHECKSUMS_URL="$(github_get_asset_url "$VERSION" "checksums.txt")"
-    github_download "$CHECKSUMS_URL" "$TMP_DIR/checksums.txt"
+    download "$CHECKSUMS_URL" "$TMP_DIR/checksums.txt"
 
     say "Downloading ${BINARY_NAME_PLATFORM}..."
     BINARY_URL="$(github_get_asset_url "$VERSION" "${BINARY_NAME_PLATFORM}")"
-    github_download "$BINARY_URL" "$TMP_DIR/${BINARY_NAME_PLATFORM}"
+    download "$BINARY_URL" "$TMP_DIR/${BINARY_NAME_PLATFORM}"
 
     # Get expected checksum for our binary
     EXPECTED_CHECKSUM="$(grep "${BINARY_NAME_PLATFORM}$" "$TMP_DIR/checksums.txt" | awk '{print $1}')"

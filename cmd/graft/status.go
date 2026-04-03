@@ -2,7 +2,10 @@ package main
 
 import "github.com/spf13/cobra"
 
-var statusJSON bool
+var (
+	statusJSON  bool
+	statusWatch bool
+)
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
@@ -11,16 +14,22 @@ var statusCmd = &cobra.Command{
 		client, ctx := newClient(cmd.Context(), true)
 		defer client.Close()
 
+		printFn := client.PrintStatus
 		if statusJSON {
-			return client.PrintStatusJSON(ctx)
+			printFn = client.PrintStatusJSON
 		}
 
-		return client.PrintStatus(ctx)
+		if statusWatch {
+			return client.WatchFn(ctx, printFn)
+		}
+
+		return printFn(ctx)
 	},
 }
 
 func init() {
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "Output status as JSON")
+	statusCmd.Flags().BoolVarP(&statusWatch, "watch", "w", false, "Watch status for changes")
 
 	rootCmd.AddCommand(statusCmd)
 }

@@ -155,12 +155,12 @@ func (client *LocalClient) PrintStatusJSON(ctx context.Context) error {
 		return errors.WrapPrefix(err, "marshaling status to JSON")
 	}
 
-	_, err = client.outWriter.Write(data)
+	_, err = client.errWriter.Write(data)
 	if err != nil {
 		return errors.WrapPrefix(err, "writing JSON output")
 	}
 
-	if _, err = client.outWriter.Write([]byte("\n")); err != nil {
+	if _, err = client.errWriter.Write([]byte("\n")); err != nil {
 		return errors.WrapPrefix(err, "writing JSON newline")
 	}
 
@@ -222,6 +222,39 @@ func (client *LocalClient) PrintDaemonStatus(ctx context.Context, connectionName
 	}
 
 	return nil
+}
+
+// WatchFn polls the watchFn every second, overwriting any printed output until the context is cancelled.
+func (client *LocalClient) WatchFn(ctx context.Context, watchFn func(context.Context) error) error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	// Save cursor position before first print.
+	fmt.Fprint(client.errWriter, "\0337")
+
+	first := true
+
+	for {
+		if !first {
+			// Restore saved cursor position + clear everything below.
+			fmt.Fprint(client.errWriter, "\0338\033[J")
+		}
+		first = false
+
+		if err := watchFn(ctx); err != nil {
+			if errors.Is(context.Cause(ctx), context.Canceled) {
+				return nil
+			}
+
+			return err
+		}
+
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }
 
 // RemoveConnection removes and potenitally tears down the daemon bound to the given connection name.

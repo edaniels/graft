@@ -411,55 +411,49 @@ func ResolveConnectionName(name, os string) string {
 
 // flushingWriter wraps a writer and tracks how many visual terminal rows
 // have been consumed, accounting for line wrapping based on terminal width.
-// Flush moves the cursor back to the start of the tracked output and clears it.
 type flushingWriter struct {
-	io.WriteCloser
-
+	w         io.Writer
 	termWidth int
 	rows      int
 	col       int
 }
 
-func newFlushingWriter(w io.WriteCloser) *flushingWriter {
+func newFlushingWriter(w io.Writer) *flushingWriter {
 	termWidth, _, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termWidth = 0
 	}
 
-	return &flushingWriter{WriteCloser: w, termWidth: termWidth}
+	return &flushingWriter{w: w, termWidth: termWidth}
 }
 
-func (w *flushingWriter) Write(p []byte) (int, error) {
-	for _, b := range p {
+// Write writes s to the underlying writer and tracks the visual rows consumed.
+func (fw *flushingWriter) Write(s string) {
+	for _, b := range []byte(s) {
 		switch b {
 		case '\n':
-			w.rows++
-			w.col = 0
+			fw.rows++
+			fw.col = 0
 		case '\r':
-			w.col = 0
+			fw.col = 0
 		default:
-			w.col++
-			if w.termWidth > 0 && w.col >= w.termWidth {
-				w.rows++
-				w.col = 0
+			fw.col++
+			if fw.termWidth > 0 && fw.col >= fw.termWidth {
+				fw.rows++
+				fw.col = 0
 			}
 		}
 	}
 
-	n, err := w.WriteCloser.Write(p)
-	if err != nil {
-		return n, errors.Wrap(err)
-	}
-
-	return n, nil
+	fmt.Fprint(fw.w, s)
 }
 
 // Flush moves the cursor up to the start of the previously written output and clears it.
-func (w *flushingWriter) Flush() {
-	if w.rows > 0 {
-		fmt.Fprintf(w.WriteCloser, "\033[%dA\033[J", w.rows)
+func (fw *flushingWriter) Flush() {
+	if fw.rows > 0 {
+		fmt.Fprintf(fw.w, "\033[%dA\033[J", fw.rows)
 	}
 
-	w.rows = 0
-	w.col = 0
+	fw.rows = 0
+	fw.col = 0
 }

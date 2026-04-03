@@ -14,16 +14,19 @@ var statusCmd = &cobra.Command{
 		client, ctx := newClient(cmd.Context(), true)
 		defer client.Close()
 
-		printFn := client.PrintStatus
-		if statusJSON {
-			printFn = client.PrintStatusJSON
-		}
-
 		if statusWatch {
-			return client.Watch(ctx, printFn)
+			if statusJSON {
+				return client.Watch(ctx, client.GetStatusJSON)
+			}
+
+			return client.Watch(ctx, client.GetStatus)
 		}
 
-		return printFn(ctx)
+		if statusJSON {
+			return client.PrintStatusJSON(ctx)
+		}
+
+		return client.PrintStatus(ctx)
 	},
 }
 

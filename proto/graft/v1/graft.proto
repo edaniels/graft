@@ -283,6 +283,7 @@ message InitializeSSHConnectionRequest {
   string local_root = 6;
   string remote_root = 7;
   bool background = 8;
+  bool will_sync = 9; // in a separate command that would likely be better here
 }
 
 message InitializeSSHConnectionResponse {
@@ -298,6 +299,7 @@ message InitializeContainerConnectionRequest {
   string local_root = 6;
   string remote_root = 7;
   bool background = 8;
+  bool will_sync = 9; // in a separate command that would likely be better here
 }
 
 message InitializeContainerConnectionResponse {

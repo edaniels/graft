@@ -1084,6 +1084,7 @@ type InitializeSSHConnectionRequest struct {
 	LocalRoot     string                 `protobuf:"bytes,6,opt,name=local_root,json=localRoot,proto3" json:"local_root,omitempty"`
 	RemoteRoot    string                 `protobuf:"bytes,7,opt,name=remote_root,json=remoteRoot,proto3" json:"remote_root,omitempty"`
 	Background    bool                   `protobuf:"varint,8,opt,name=background,proto3" json:"background,omitempty"`
+	WillSync      bool                   `protobuf:"varint,9,opt,name=will_sync,json=willSync,proto3" json:"will_sync,omitempty"` // in a separate command that would likely be better here
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1174,6 +1175,13 @@ func (x *InitializeSSHConnectionRequest) GetBackground() bool {
 	return false
 }
 
+func (x *InitializeSSHConnectionRequest) GetWillSync() bool {
+	if x != nil {
+		return x.WillSync
+	}
+	return false
+}
+
 type InitializeSSHConnectionResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1228,6 +1236,7 @@ type InitializeContainerConnectionRequest struct {
 	LocalRoot       string                 `protobuf:"bytes,6,opt,name=local_root,json=localRoot,proto3" json:"local_root,omitempty"`
 	RemoteRoot      string                 `protobuf:"bytes,7,opt,name=remote_root,json=remoteRoot,proto3" json:"remote_root,omitempty"`
 	Background      bool                   `protobuf:"varint,8,opt,name=background,proto3" json:"background,omitempty"`
+	WillSync        bool                   `protobuf:"varint,9,opt,name=will_sync,json=willSync,proto3" json:"will_sync,omitempty"` // in a separate command that would likely be better here
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1314,6 +1323,13 @@ func (x *InitializeContainerConnectionRequest) GetRemoteRoot() string {
 func (x *InitializeContainerConnectionRequest) GetBackground() bool {
 	if x != nil {
 		return x.Background
+	}
+	return false
+}
+
+func (x *InitializeContainerConnectionRequest) GetWillSync() bool {
+	if x != nil {
+		return x.WillSync
 	}
 	return false
 }
@@ -4094,7 +4110,7 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\vconnections\x18\x01 \x03(\v22.graft.v1.ListConnectionsResponse.ConnectionsEntryR\vconnections\x1aZ\n" +
 	"\x10ConnectionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.graft.v1.ConnectionStatusR\x05value:\x028\x01\"\xf7\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x1a.graft.v1.ConnectionStatusR\x05value:\x028\x01\"\x94\x02\n" +
 	"\x1eInitializeSSHConnectionRequest\x12\x10\n" +
 	"\x03cwd\x18\x01 \x01(\tR\x03cwd\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -4107,9 +4123,10 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"remoteRoot\x12\x1e\n" +
 	"\n" +
 	"background\x18\b \x01(\bR\n" +
-	"background\"5\n" +
+	"background\x12\x1b\n" +
+	"\twill_sync\x18\t \x01(\bR\bwillSync\"5\n" +
 	"\x1fInitializeSSHConnectionResponse\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\x91\x02\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"\xae\x02\n" +
 	"$InitializeContainerConnectionRequest\x12\x10\n" +
 	"\x03cwd\x18\x01 \x01(\tR\x03cwd\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1b\n" +
@@ -4122,7 +4139,8 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"remoteRoot\x12\x1e\n" +
 	"\n" +
 	"background\x18\b \x01(\bR\n" +
-	"background\";\n" +
+	"background\x12\x1b\n" +
+	"\twill_sync\x18\t \x01(\bR\bwillSync\";\n" +
 	"%InitializeContainerConnectionResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"-\n" +
 	"\x17RemoveConnectionRequest\x12\x12\n" +

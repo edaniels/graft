@@ -322,7 +322,7 @@ func (srv *Server) InitializeSSHConnection(
 
 	background := req.GetBackground()
 
-	conn, err := srv.connMgr.Initialize(ctx, name, destURL, localRoot, remoteRoot, srv.identity, background)
+	conn, err := srv.connMgr.Initialize(ctx, name, destURL, localRoot, remoteRoot, srv.identity, background, req.GetWillSync())
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +370,7 @@ func (srv *Server) InitializeContainerConnection(
 
 	background := req.GetBackground()
 
-	conn, err := srv.connMgr.Initialize(ctx, name, &destURL, localRoot, remoteRoot, srv.identity, background)
+	conn, err := srv.connMgr.Initialize(ctx, name, &destURL, localRoot, remoteRoot, srv.identity, background, req.GetWillSync())
 	if err != nil {
 		return nil, err
 	}

@@ -104,7 +104,7 @@ func TestConnectionManagerFailedInitDestroyIfFailRemovesConnection(t *testing.T)
 	test.That(t, err, test.ShouldBeNil)
 
 	// Initialize (destroyIfFail=true) should fail and remove connection from map.
-	_, initErr := mgr.Initialize(t.Context(), "myconn", destURL, "/local", "/remote", "", false)
+	_, initErr := mgr.Initialize(t.Context(), "myconn", destURL, "/local", "/remote", "", false, false)
 	test.That(t, initErr, test.ShouldNotBeNil)
 
 	conns := mgr.Connections()
@@ -565,4 +565,36 @@ func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
 		_, err = mgr.createConnection("connB", "", "/remote2", daemon, false)
 		test.That(t, err, test.ShouldBeNil)
 	})
+}
+
+func TestCreateConnection_EmptyRemoteRoot_WillSync(t *testing.T) {
+	parentRoot := t.TempDir()
+	childRoot := filepath.Join(parentRoot, "child")
+	test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
+
+	mgr := NewConnectionManager(slog.LevelDebug)
+	defer mgr.Close()
+
+	connector := &fakeInitConnector{
+		initFunc: func(ctx context.Context) (bool, error) {
+			return true, nil
+		},
+	}
+
+	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: connector})
+
+	destURL, err := url.Parse("ssh://host")
+	test.That(t, err, test.ShouldBeNil)
+
+	// skip creating a daemon
+	// TODO(erd): we ought to mock this out better so as to not mess with internals
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+	daemon.runCtx = mgr.runCtx
+	daemon.setState(ConnectionStateConnected)
+	mgr.daemons[daemonKey(destURL, "ident")] = daemon
+
+	willSync := true
+	conn, initErr := mgr.Initialize(t.Context(), "myconn", destURL, "/local", "", "ident", false, willSync)
+	test.That(t, initErr, test.ShouldBeNil)
+	test.That(t, conn.RemoteRoot(), test.ShouldEqual, defaultSyncRemotePath(daemon.HomeDir(), "ident", "/local"))
 }

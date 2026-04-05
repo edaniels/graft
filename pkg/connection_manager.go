@@ -359,7 +359,9 @@ func (mgr *ConnectionManager) initialize(
 		return nil
 	})
 
+	var remoteRootModified bool
 	if remoteRoot == "" && willSync {
+		remoteRootModified = true
 		// e.g. graft connect user@server --sync
 		// TODO(erd): we should really just do synchronization here so that we don't calculate defaultSyncRemotePath
 		// in two places. It feels extraordinarily prone to bugs.
@@ -367,6 +369,19 @@ func (mgr *ConnectionManager) initialize(
 		if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
 			return nil, err
 		}
+	} else if strings.HasPrefix(conn.RemoteRoot(), "~/") {
+		remoteRootModified = true
+
+		remoteRoot := filepath.Join(daemon.HomeDir(), conn.RemoteRoot()[2:])
+		if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
+			return nil, err
+		}
+	}
+
+	if remoteRootModified {
+		mgr.connMgrMu.Lock()
+		mgr.updateDaemonRemoteRoots(daemon)
+		mgr.connMgrMu.Unlock()
 	}
 
 	if errors.Is(initErr, errDaemonSuperseded) {

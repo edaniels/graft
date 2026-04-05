@@ -333,7 +333,7 @@ func (srv *Server) InitializeSSHConnection(
 		Name:        conn.Name(),
 		Destination: conn.daemon.Destination(),
 		LocalRoot:   localRoot,
-		RemoteRoot:  remoteRoot,
+		RemoteRoot:  conn.RemoteRoot(),
 		Background:  background,
 	})
 	srv.persistConfig()
@@ -380,7 +380,7 @@ func (srv *Server) InitializeContainerConnection(
 		Name:        conn.Name(),
 		Destination: conn.daemon.Destination(),
 		LocalRoot:   localRoot,
-		RemoteRoot:  remoteRoot,
+		RemoteRoot:  conn.RemoteRoot(),
 		Background:  background,
 	})
 	srv.persistConfig()

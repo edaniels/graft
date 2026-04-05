@@ -108,6 +108,7 @@ func CheckForUpdate(ctx context.Context, client ReleaseClient, currentVersion st
 	if currentVersion == versionUnknown {
 		return &UpdateCheckResult{Skipped: true}, nil
 	}
+
 	slog.DebugContext(ctx, "checking for update", "current_version", currentVersion)
 
 	latestVersion, err := client.LatestVersion(ctx)

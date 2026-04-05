@@ -26,6 +26,7 @@ func NewLogger(defaultLevel slog.Level) *slog.Logger {
 
 func newLogger(defaultLevel slog.Level) (*slog.Logger, slog.Level) {
 	selectedLogLevel := defaultLevel
+
 	if logLevelStr, ok := os.LookupEnv("GRAFT_LOG_LEVEL"); ok {
 		var logLevel slog.Level
 		if err := logLevel.UnmarshalText([]byte(logLevelStr)); err == nil {

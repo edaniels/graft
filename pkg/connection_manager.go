@@ -318,6 +318,7 @@ func (mgr *ConnectionManager) initialize(
 	identity string,
 	destroyIfFail bool,
 	background bool,
+	willSync bool,
 ) (*Connection, error) {
 	scheme, err := mgr.scheme(destURL)
 	if err != nil {
@@ -358,6 +359,16 @@ func (mgr *ConnectionManager) initialize(
 		return nil
 	})
 
+	if remoteRoot == "" && willSync {
+		// e.g. graft connect user@server --sync
+		// TODO(erd): we should really just do synchronization here so that we don't calculate defaultSyncRemotePath
+		// in two places. It feels extraordinarily prone to bugs.
+		remoteRoot = defaultSyncRemotePath(daemon.HomeDir(), identity, localRoot)
+		if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
+			return nil, err
+		}
+	}
+
 	if errors.Is(initErr, errDaemonSuperseded) {
 		merged := daemon.supersededBy
 		mgr.followSupersede(daemon, merged)
@@ -378,17 +389,25 @@ func (mgr *ConnectionManager) initialize(
 
 // Initialize sets up a new connection with a daemon running at the given destination.
 func (mgr *ConnectionManager) Initialize(
-	ctx context.Context, name string, destURL *url.URL, localRoot, remoteRoot, identity string, background bool,
+	ctx context.Context,
+	name string,
+	destURL *url.URL,
+	localRoot, remoteRoot, identity string,
+	background, willSync bool,
 ) (*Connection, error) {
-	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, true, background)
+	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, true, background, willSync)
 }
 
 // Restore ensures a connection is re-established. It's similar to Initialize but will only ensure the connection's
 // daemon is running.
 func (mgr *ConnectionManager) Restore(
-	ctx context.Context, name string, destURL *url.URL, localRoot, remoteRoot, identity string, background bool,
+	ctx context.Context,
+	name string,
+	destURL *url.URL,
+	localRoot, remoteRoot, identity string,
+	background bool,
 ) (*Connection, error) {
-	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, false, background)
+	return mgr.initialize(ctx, name, destURL, localRoot, remoteRoot, identity, false, background, false)
 }
 
 var (

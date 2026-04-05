@@ -389,6 +389,7 @@ func (client *LocalClient) InitializeRemoteConnection(ctx context.Context, param
 		LocalRoot:   params.LocalRoot,
 		RemoteRoot:  params.RemoteRoot,
 		Background:  params.Background,
+		WillSync:    params.WithSync,
 	})
 	if err != nil {
 		return client.handleError(err)
@@ -410,6 +411,7 @@ func (client *LocalClient) InitializeDockerConnection(ctx context.Context, param
 		LocalRoot:       params.LocalRoot,
 		RemoteRoot:      params.RemoteRoot,
 		Background:      params.Background,
+		WillSync:        params.WithSync,
 	})
 	if err != nil {
 		return client.handleError(err)

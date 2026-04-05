@@ -140,7 +140,7 @@ func TestConnectionManagerE2E(t *testing.T) {
 
 			localRoot := t.TempDir()
 
-			conn, err := mgr.Initialize(t.Context(), connName, v.destURL, localRoot, "", "", false)
+			conn, err := mgr.Initialize(t.Context(), connName, v.destURL, localRoot, "", "", false, false)
 			test.That(t, err, test.ShouldBeNil)
 
 			t.Cleanup(func() {
@@ -178,7 +178,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	connName2 := sanitizeContainerName("graft-e2e-sameid2-" + t.Name())
 
 	// First connection installs and starts the remote daemon.
-	conn1, err := mgr.Initialize(t.Context(), connName1, destURL, t.TempDir(), "/tmp/proj1", identity, false)
+	conn1, err := mgr.Initialize(t.Context(), connName1, destURL, t.TempDir(), "/tmp/proj1", identity, false, false)
 	test.That(t, err, test.ShouldBeNil)
 
 	t.Cleanup(func() {
@@ -201,7 +201,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	t.Cleanup(func() { ourVersion = savedVersion })
 
 	// Second connection with the same identity reuses the existing remote daemon.
-	conn2, err := mgr.Initialize(t.Context(), connName2, destURL, t.TempDir(), "/tmp/proj2", identity, false)
+	conn2, err := mgr.Initialize(t.Context(), connName2, destURL, t.TempDir(), "/tmp/proj2", identity, false, false)
 	test.That(t, err, test.ShouldBeNil)
 
 	t.Cleanup(func() {
@@ -270,7 +270,7 @@ func TestMultipleConnectionsDifferentIdentitiesE2E(t *testing.T) {
 	connName2 := sanitizeContainerName("graft-e2e-diffid2-" + t.Name())
 
 	// First connection with identity "alpha".
-	conn1, err := mgr.Initialize(t.Context(), connName1, destURL, t.TempDir(), "/tmp/proj1", "test-alpha-aa11", false)
+	conn1, err := mgr.Initialize(t.Context(), connName1, destURL, t.TempDir(), "/tmp/proj1", "test-alpha-aa11", false, false)
 	test.That(t, err, test.ShouldBeNil)
 
 	t.Cleanup(func() {
@@ -281,7 +281,7 @@ func TestMultipleConnectionsDifferentIdentitiesE2E(t *testing.T) {
 	test.That(t, state1, test.ShouldEqual, ConnectionStateConnected)
 
 	// Second connection with identity "bravo" which has a separate remote daemon instance.
-	conn2, err := mgr.Initialize(t.Context(), connName2, destURL, t.TempDir(), "/tmp/proj2", "test-bravo-bb22", false)
+	conn2, err := mgr.Initialize(t.Context(), connName2, destURL, t.TempDir(), "/tmp/proj2", "test-bravo-bb22", false, false)
 	test.That(t, err, test.ShouldBeNil)
 
 	t.Cleanup(func() {
@@ -719,7 +719,7 @@ func TestConnectionReconnectE2E(t *testing.T) {
 
 			localRoot := t.TempDir()
 
-			conn, err := mgr.Initialize(t.Context(), connName, v.destURL, localRoot, "", "", false)
+			conn, err := mgr.Initialize(t.Context(), connName, v.destURL, localRoot, "", "", false, false)
 			test.That(t, err, test.ShouldBeNil)
 
 			t.Cleanup(func() {
@@ -924,7 +924,7 @@ chown -R testuser:testuser /home/testuser/project`)
 	connName := sanitizeContainerName("graft-e2e-envprov-" + t.Name())
 	destURL := env.sshDestURL(t, sc.port)
 
-	conn, err := mgr.Initialize(t.Context(), connName, destURL, t.TempDir(), "/home/testuser/project", "", false)
+	conn, err := mgr.Initialize(t.Context(), connName, destURL, t.TempDir(), "/home/testuser/project", "", false, false)
 	test.That(t, err, test.ShouldBeNil)
 
 	t.Cleanup(func() {

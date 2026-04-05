@@ -59,7 +59,7 @@ func newLogger(defaultLevel slog.Level) (*slog.Logger, slog.Level) {
 
 // NewBufferedLogger returns a logger that excludes logs less severe than the default, unless one is set by GRAFT_LOG_LEVEL.
 // It also returns a buffer that retains recent logs to assist in debugging.
-func NewBufferedLogger(defaultLevel slog.Level) (*slog.Logger, *BufferedLineWriter) {
+func NewBufferedLogger(defaultLevel slog.Level) (*slog.Logger, *BufferedLineWriter, slog.Level) {
 	logger, level := newLogger(defaultLevel)
 	buffWriter := &BufferedLineWriter{MaxLines: 10}
 	handlers := []slog.Handler{logger.Handler(), slog.NewJSONHandler(buffWriter, &slog.HandlerOptions{
@@ -67,7 +67,7 @@ func NewBufferedLogger(defaultLevel slog.Level) (*slog.Logger, *BufferedLineWrit
 		Level:     level,
 	})}
 
-	return slog.New(newCopyHandler(handlers...)), buffWriter
+	return slog.New(newCopyHandler(handlers...)), buffWriter, level
 }
 
 // stackTraceHandler adds an error_stack attribute to logs if an error is set, contains a stack, and is
@@ -125,7 +125,7 @@ func (h stackTraceHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 
 		fmtStack := func(err *errors.Error) string {
-			return strings.ReplaceAll(err.ErrorStack(), "\t", "")
+			return strings.TrimSpace(err.ErrorStack())
 		}
 
 		if len(errsWithStack) == 1 {

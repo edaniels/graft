@@ -23,6 +23,7 @@ import (
 // the manager doesn't do very much other than fetching connections and forwarding methods to them in
 // a guarded fashion (when they are in the right state).
 type ConnectionManager struct {
+	logLevel slog.Level
 	//nolint:containedctx // self-owned
 	runCtx              context.Context
 	connections         map[string]*Connection
@@ -34,7 +35,7 @@ type ConnectionManager struct {
 }
 
 // NewConnectionManager returns a non-started ConnectionManager.
-func NewConnectionManager() *ConnectionManager {
+func NewConnectionManager(logLevel slog.Level) *ConnectionManager {
 	runCtx, runCtxCancel := context.WithCancel(context.Background())
 
 	var rootsPath string
@@ -43,6 +44,7 @@ func NewConnectionManager() *ConnectionManager {
 	}
 
 	return &ConnectionManager{
+		logLevel:            logLevel,
 		connections:         map[string]*Connection{},
 		daemons:             map[string]*remoteDaemon{},
 		schemes:             map[string]ConnectorFactory{},
@@ -88,7 +90,7 @@ func (mgr *ConnectionManager) getOrCreateDaemonForConnection(
 		return conn.daemon, conn, nil
 	}
 
-	daemon, err := mgr.getOrCreateDaemon(ctx, destURL, identity, scheme)
+	daemon, err := mgr.getOrCreateDaemon(ctx, destURL, identity, scheme, mgr.logLevel)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -204,6 +206,7 @@ func (mgr *ConnectionManager) getOrCreateDaemon(
 	destURL *url.URL,
 	identity string,
 	scheme ConnectorFactory,
+	logLevel slog.Level,
 ) (*remoteDaemon, error) {
 	key := daemonKey(destURL, identity)
 
@@ -218,7 +221,7 @@ func (mgr *ConnectionManager) getOrCreateDaemon(
 		return nil, errors.Wrap(err)
 	}
 
-	d := newRemoteDaemon(connector)
+	d := newRemoteDaemon(connector, logLevel)
 	d.runCtx = mgr.runCtx
 	d.mapKey = key
 	d.refCount = 1

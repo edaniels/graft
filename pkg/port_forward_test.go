@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"testing"
@@ -39,7 +40,7 @@ func TestPortConflictDetectionTCP(t *testing.T) {
 	test.That(t, reason, test.ShouldContainSubstring, "already in use")
 
 	// startPortForward should mark it as conflicted.
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	fwd := daemon.startPortForward(t.Context(), &graftv1.PortInfo{
 		Port:     port,
 		Host:     "127.0.0.1",
@@ -74,7 +75,7 @@ func TestPortConflictDetectionUDP(t *testing.T) {
 	test.That(t, reason, test.ShouldContainSubstring, "already in use")
 
 	// startPortForward should mark it as conflicted.
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	fwd := daemon.startPortForward(t.Context(), &graftv1.PortInfo{
 		Port:     port,
 		Host:     "127.0.0.1",
@@ -132,7 +133,7 @@ func startTestRemoteDaemon(t *testing.T) string {
 
 	t.Setenv("GRAFT_STATE_HOME", tmpDir)
 
-	srv, err := NewServer(&RootConfig{}, ServerRoleRemote, "", true, &BufferedLineWriter{MaxLines: 10}, "")
+	srv, err := NewServer(&RootConfig{}, ServerRoleRemote, "", true, &BufferedLineWriter{MaxLines: 10}, "", slog.LevelDebug)
 	test.That(t, err, test.ShouldBeNil)
 
 	test.That(t, srv.Run(t.Context()), test.ShouldBeNil)
@@ -194,7 +195,7 @@ func startEchoServer(t *testing.T) uint32 {
 
 // testDaemonForRelay returns a remoteDaemon with remoteConn set for relay testing.
 func testDaemonForRelay(remoteConn RemoteDaemonConnection) *remoteDaemon {
-	d := newRemoteDaemon(&noopConnector{})
+	d := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	d.mu.Lock()
 	d.remoteConn = remoteConn
 	d.state = ConnectionStateConnected
@@ -618,7 +619,7 @@ func TestAddExplicitPortForward(t *testing.T) {
 }
 
 func TestAddExplicitPortForwardIdempotent(t *testing.T) {
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 
 	// Use a port that won't conflict.
 	freeListener, freePort := listenFreePort(t)
@@ -645,7 +646,7 @@ func TestAddExplicitPortForwardIdempotent(t *testing.T) {
 }
 
 func TestRemoveExplicitPortForward(t *testing.T) {
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 
 	freeListener, freePort := listenFreePort(t)
 	freeListener.Close()
@@ -671,7 +672,7 @@ func TestRemoveExplicitPortForward(t *testing.T) {
 }
 
 func TestRemoveAutoDetectedPortForwardReturnsFalse(t *testing.T) {
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 
 	spec := PortForwardSpec{
 		RemotePort: 8080,
@@ -684,7 +685,7 @@ func TestRemoveAutoDetectedPortForwardReturnsFalse(t *testing.T) {
 }
 
 func TestExplicitPortForwardSurvivesReconciliation(t *testing.T) {
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 
 	freeListener, freePort := listenFreePort(t)
 	freeListener.Close()
@@ -715,7 +716,7 @@ func TestAddExplicitPortForwardConflict(t *testing.T) {
 	listener, port := listenFreePort(t)
 	defer listener.Close()
 
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	spec := PortForwardSpec{
 		RemotePort: 9999, // doesn't matter
 		LocalPort:  port,

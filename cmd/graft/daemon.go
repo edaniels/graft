@@ -34,7 +34,7 @@ var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Run the graft daemon server",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		return runDaemon(daemonReplace, daemonDetach, daemonAsRemote, daemonIsDaemonized, daemonIsRestart, daemonIdentity)
+		return runDaemon()
 	},
 }
 
@@ -110,25 +110,21 @@ func init() {
 	rootCmd.AddCommand(daemonCmd)
 }
 
-func runDaemon(replace, detach, asRemote, isDaemonized, isRestart bool, identity string) error {
+func runDaemon() error {
 	serverRole := graft.ServerRoleLocal
-	if asRemote {
+	if daemonAsRemote {
 		serverRole = graft.ServerRoleRemote
 	}
 
-	if !isDaemonized && (detach || asRemote) {
+	if !daemonIsDaemonized && (daemonDetach || daemonAsRemote) {
 		return serveDaemonize(serverRole)
 	}
 
 	runtimeCtx := setupRuntimeContext()
 	defer runtimeCtx.Close(context.Canceled)
 
-	logger, buffWriter := graft.NewBufferedLogger(slog.LevelInfo)
+	logger, buffWriter, logLevel := graft.NewBufferedLogger(slog.LevelInfo)
 	slog.SetDefault(logger)
-
-	logVersion(runtimeCtx.Ctx, logger)
-
-	go checkForUpdateInBackground(runtimeCtx.Ctx, logger)
 
 	// For local daemons, load persistent identity to use when connecting to remotes.
 	if serverRole == graft.ServerRoleLocal {
@@ -137,9 +133,12 @@ func runDaemon(replace, detach, asRemote, isDaemonized, isRestart bool, identity
 			return errors.WrapPrefix(identityErr, "error loading daemon identity")
 		}
 
-		identity = localIdentity
-		logger.InfoContext(runtimeCtx.Ctx, "daemon identity", "identity", identity)
+		daemonIdentity = localIdentity
 	}
+
+	logStartup(runtimeCtx.Ctx, logger)
+
+	go checkForUpdateInBackground(runtimeCtx.Ctx, logger)
 
 	var success bool
 
@@ -148,7 +147,7 @@ func runDaemon(replace, detach, asRemote, isDaemonized, isRestart bool, identity
 			return
 		}
 
-		if err := respondToDaemonizerSignal(success, isDaemonized, isRestart); err != nil {
+		if err := respondToDaemonizerSignal(success, daemonIsDaemonized, daemonIsRestart); err != nil {
 			panic(err)
 		}
 	}()
@@ -183,7 +182,15 @@ func runDaemon(replace, detach, asRemote, isDaemonized, isRestart bool, identity
 		return errors.Wrap(reloadErr)
 	}
 
-	server, err := graft.NewServer(&rootConfig, serverRole, rootConfigPath, replace, buffWriter, identity)
+	server, err := graft.NewServer(
+		&rootConfig,
+		serverRole,
+		rootConfigPath,
+		daemonReplace,
+		buffWriter,
+		daemonIdentity,
+		logLevel,
+	)
 	if err != nil {
 		return errors.Wrap(err)
 	}
@@ -191,7 +198,7 @@ func runDaemon(replace, detach, asRemote, isDaemonized, isRestart bool, identity
 	runtimeCtx.SignalStartupDone()
 
 	success = true
-	if respondErr := respondToDaemonizerSignal(success, isDaemonized, isRestart); respondErr != nil {
+	if respondErr := respondToDaemonizerSignal(success, daemonIsDaemonized, daemonIsRestart); respondErr != nil {
 		return respondErr
 	}
 
@@ -280,31 +287,35 @@ func setupRuntimeContext() runtimeContext {
 	}}
 }
 
-func logVersion(ctx context.Context, logger *slog.Logger) {
+func logStartup(ctx context.Context, logger *slog.Logger) {
 	buildVersion := graft.BuildVersion()
-	verFields := []any{"pid", os.Getpid()}
+	fields := []any{"pid", os.Getpid()}
+
+	if daemonIdentity != "" {
+		fields = append(fields, "identity", daemonIdentity)
+	}
 
 	if buildVersion.Version != nil {
-		verFields = append(verFields, "version", buildVersion.GetVersion())
+		fields = append(fields, "version", buildVersion.GetVersion())
 	}
 
 	if buildVersion.VcsRevision != nil {
-		verFields = append(verFields, "vcs_revision", buildVersion.GetVcsRevision())
+		fields = append(fields, "vcs_revision", buildVersion.GetVcsRevision())
 	}
 
 	if buildVersion.VcsModified != nil {
-		verFields = append(verFields, "vcs_modified", buildVersion.GetVcsModified())
+		fields = append(fields, "vcs_modified", buildVersion.GetVcsModified())
 	}
 
 	if buildVersion.VcsTime != nil {
-		verFields = append(verFields, "vcs_time", buildVersion.GetVcsTime())
+		fields = append(fields, "vcs_time", buildVersion.GetVcsTime())
 	}
 
 	if buildVersion.Notes != nil {
-		verFields = append(verFields, "notes", buildVersion.GetNotes())
+		fields = append(fields, "notes", buildVersion.GetNotes())
 	}
 
-	logger.InfoContext(ctx, graft.Name, verFields...)
+	logger.InfoContext(ctx, graft.Name, fields...)
 }
 
 func serveDaemonize(role graft.ServerRole) error {

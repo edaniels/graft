@@ -49,6 +49,7 @@ type activePortForward struct {
 // the daemon's state.
 type remoteDaemon struct {
 	connector RemoteConnector
+	logLevel  slog.Level
 
 	//nolint:containedctx // long-lived context for monitoring goroutines; set by ConnectionManager
 	runCtx context.Context
@@ -87,9 +88,10 @@ type remoteDaemon struct {
 }
 
 // newRemoteDaemon creates a remoteDaemon that owns the given connector.
-func newRemoteDaemon(connector RemoteConnector) *remoteDaemon {
+func newRemoteDaemon(connector RemoteConnector, logLevel slog.Level) *remoteDaemon {
 	d := &remoteDaemon{
 		connector:     connector,
+		logLevel:      logLevel,
 		portForwards:  map[string]*activePortForward{},
 		explicitPorts: map[string]PortForwardSpec{},
 	}
@@ -738,7 +740,7 @@ func (d *remoteDaemon) reinstallDaemon(
 		daemonArgs += " --replace"
 	}
 
-	cmd := fmt.Sprintf("bash -ic '%s'", daemonArgs)
+	cmd := fmt.Sprintf("GRAFT_LOG_LEVEL=%s bash -ic '%s'", d.logLevel.String(), daemonArgs)
 	slog.DebugContext(ctx, "starting daemon on remote", "cmd", cmd)
 
 	if _, runErr := d.connector.RunOneShotCommand(ctx, cmd); runErr != nil {

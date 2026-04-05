@@ -63,6 +63,7 @@ func NewServer(
 	replace bool,
 	buffLineWriter *BufferedLineWriter,
 	identity string,
+	logLevel slog.Level,
 ) (*Server, error) {
 	var (
 		connMgr      *ConnectionManager
@@ -72,7 +73,7 @@ func NewServer(
 
 	switch role {
 	case ServerRoleLocal:
-		connMgr = NewConnectionManager()
+		connMgr = NewConnectionManager(logLevel)
 
 		connMgr.RegisterConnectorFactory(dockerSchemeName, newDockerConnectorFactory())
 

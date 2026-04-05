@@ -82,6 +82,8 @@ func VersionString() string {
 	return versionString(BuildVersion())
 }
 
+const versionUnknown = "unknown"
+
 func versionString(info *graftv1.VersionInfo) string {
 	// Use tagged version if available and not a pseudo-version
 	if info.Version != nil {
@@ -110,7 +112,7 @@ func versionString(info *graftv1.VersionInfo) string {
 		return info.GetNotes()
 	}
 
-	return "unknown"
+	return versionUnknown
 }
 
 // BuildVersionsEqual compares two versions and returns an empty string if they are equal and if they are

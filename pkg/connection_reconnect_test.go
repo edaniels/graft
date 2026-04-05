@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -142,7 +143,7 @@ func (m *mockReconnectConnector) Close() error {
 func newTestDaemon(t *testing.T, connector *mockReconnectConnector) *remoteDaemon {
 	t.Helper()
 
-	d := newRemoteDaemon(connector)
+	d := newRemoteDaemon(connector, slog.LevelDebug)
 	d.runCtx = t.Context()
 	d.mu.Lock()
 	d.remoteConn = newMockRemoteDaemonConnection()
@@ -303,7 +304,7 @@ func TestReconnectStateTransitions(t *testing.T) {
 func newFailedTestDaemon(t *testing.T, connector *mockReconnectConnector) *remoteDaemon {
 	t.Helper()
 
-	d := newRemoteDaemon(connector)
+	d := newRemoteDaemon(connector, slog.LevelDebug)
 	d.runCtx = t.Context()
 	d.mu.Lock()
 	d.state = ConnectionStateFailed

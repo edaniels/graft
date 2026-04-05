@@ -1,6 +1,7 @@
 package graft
 
 import (
+	"log/slog"
 	"net/url"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 
 // TODO(erd): unify with newConnection so tests exercise the real creation path.
 func newTestConnectionWithRoots(localRoot, remoteRoot string) *Connection {
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 
 	return newConnection(daemon, "test", localRoot, remoteRoot, false)
 }

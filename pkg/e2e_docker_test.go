@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -133,7 +134,7 @@ func TestConnectionManagerE2E(t *testing.T) {
 			connName := sanitizeContainerName("graft-e2e-connmgr-" + t.Name())
 			v := newVariant(t, connName)
 
-			mgr := NewConnectionManager()
+			mgr := NewConnectionManager(slog.LevelDebug)
 			mgr.RegisterConnectorFactory(v.schemeName, v.factory)
 			t.Cleanup(mgr.Close)
 
@@ -166,7 +167,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 
 	sshPort := env.startSSHContainer(t)
 
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	mgr.RegisterConnectorFactory(sshSchemeName, env.sshConnectorFactory(t))
 	t.Cleanup(mgr.Close)
 
@@ -259,7 +260,7 @@ func TestMultipleConnectionsDifferentIdentitiesE2E(t *testing.T) {
 
 	sshPort := env.startSSHContainer(t)
 
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	mgr.RegisterConnectorFactory(sshSchemeName, env.sshConnectorFactory(t))
 	t.Cleanup(mgr.Close)
 
@@ -712,7 +713,7 @@ func TestConnectionReconnectE2E(t *testing.T) {
 			connName := sanitizeContainerName("graft-e2e-reconnect-" + t.Name())
 			v := newVariant(t, connName)
 
-			mgr := NewConnectionManager()
+			mgr := NewConnectionManager(slog.LevelDebug)
 			mgr.RegisterConnectorFactory(v.schemeName, v.factory)
 			t.Cleanup(mgr.Close)
 
@@ -916,7 +917,7 @@ chown -R testuser:testuser /home/testuser/project`)
 
 	// Connect via SSH. The remote daemon starts, detects fake mise,
 	// and begins periodic Refresh for /home/testuser/project.
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	mgr.RegisterConnectorFactory(sshSchemeName, env.sshConnectorFactory(t))
 	t.Cleanup(mgr.Close)
 

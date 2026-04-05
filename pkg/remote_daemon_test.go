@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -51,7 +52,7 @@ func TestRemoteDaemonDiscover(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 		ctx := context.Background()
 
 		// First call discovers.
@@ -85,7 +86,7 @@ func TestRemoteDaemonDiscover(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 		ctx := context.Background()
 
 		info1, err := daemon.discover(ctx)
@@ -114,7 +115,7 @@ func TestRemoteDaemonDiscover(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 		ctx := context.Background()
 
 		info, err := daemon.discover(ctx)
@@ -145,7 +146,7 @@ func TestRemoteDaemonDiscover(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 		ctx := context.Background()
 
 		var wg sync.WaitGroup
@@ -179,7 +180,7 @@ func TestRemoteDaemonDiscover(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 		ctx := context.Background()
 
 		_, err := daemon.discover(ctx)
@@ -216,7 +217,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 
 		err := daemon.Initialize(context.Background(), nil)
 		test.That(t, err, test.ShouldNotBeNil)
@@ -233,7 +234,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 
 		err := daemon.Initialize(context.Background(), func() error {
 			return errDaemonSuperseded
@@ -242,7 +243,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 	})
 
 	t.Run("connected daemon is no-op", func(t *testing.T) {
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.state = ConnectionStateConnected
 
 		err := daemon.Initialize(context.Background(), nil)
@@ -255,7 +256,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 			ConnectionStateClosed,
 			ConnectionStateReconnecting,
 		} {
-			daemon := newRemoteDaemon(&noopConnector{})
+			daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 			daemon.state = state
 
 			err := daemon.Initialize(context.Background(), nil)
@@ -275,7 +276,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 
 		var wg sync.WaitGroup
 
@@ -306,7 +307,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 
 		// First caller: blocks in InitializeRemote.
 		go func() {
@@ -338,7 +339,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 			},
 		}
 
-		daemon := newRemoteDaemon(connector)
+		daemon := newRemoteDaemon(connector, slog.LevelDebug)
 
 		errCh := make(chan error, 2)
 
@@ -368,7 +369,7 @@ func TestRemoteDaemonInitialize(t *testing.T) {
 
 func TestRemoteDaemonInstallGuard(t *testing.T) {
 	t.Run("markInstalled prevents second install", func(t *testing.T) {
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		test.That(t, daemon.alreadyInstalled(), test.ShouldBeFalse)
 
 		daemon.markInstalled()
@@ -376,7 +377,7 @@ func TestRemoteDaemonInstallGuard(t *testing.T) {
 	})
 
 	t.Run("resetInstallState allows reinstall", func(t *testing.T) {
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.markInstalled()
 		test.That(t, daemon.alreadyInstalled(), test.ShouldBeTrue)
 
@@ -385,7 +386,7 @@ func TestRemoteDaemonInstallGuard(t *testing.T) {
 	})
 
 	t.Run("shared across connections", func(t *testing.T) {
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 
 		conn1 := newConnection(daemon, "conn1", "", "", false)
 		conn2 := newConnection(daemon, "conn2", "", "", false)

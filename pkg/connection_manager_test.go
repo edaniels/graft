@@ -2,6 +2,7 @@ package graft
 
 import (
 	"context"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestConnectionManagerConnectionsSnapshot(t *testing.T) {
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	defer mgr.Close()
 
 	// Empty manager returns empty map.
@@ -21,7 +22,7 @@ func TestConnectionManagerConnectionsSnapshot(t *testing.T) {
 	test.That(t, conns, test.ShouldBeEmpty)
 
 	// Add a connection directly to the map (simulating createConnection).
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	daemon.runCtx = mgr.runCtx
 	conn, err := mgr.createConnection("test-conn", "/local", "/remote", daemon, false)
 	test.That(t, err, test.ShouldBeNil)
@@ -56,7 +57,7 @@ func TestConnectionManagerConnectionVisibleDuringInit(t *testing.T) {
 		},
 	}
 
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	defer mgr.Close()
 
 	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: connector})
@@ -94,7 +95,7 @@ func TestConnectionManagerFailedInitDestroyIfFailRemovesConnection(t *testing.T)
 		},
 	}
 
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	defer mgr.Close()
 
 	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: connector})
@@ -117,7 +118,7 @@ func TestConnectionManagerFailedInitRestoreLeavesConnection(t *testing.T) {
 		},
 	}
 
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	defer mgr.Close()
 
 	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: connector})
@@ -139,10 +140,10 @@ func TestConnectionManagerFailedInitRestoreLeavesConnection(t *testing.T) {
 
 func TestConnectionManagerRemoveForwardCommands(t *testing.T) {
 	t.Run("removes commands from an existing connection", func(t *testing.T) {
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 		daemon.setState(ConnectionStateConnected)
 		conn, createErr := mgr.createConnection("test-conn", "/local", "/remote", daemon, false)
@@ -161,7 +162,7 @@ func TestConnectionManagerRemoveForwardCommands(t *testing.T) {
 	})
 
 	t.Run("returns error for unknown connection", func(t *testing.T) {
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
 		err := mgr.RemoveForwardCommands("nonexistent", []string{"go"})
@@ -293,7 +294,7 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	daemon.runCtx = runCtx
 	mgr.connections["dev"] = newConnection(daemon, "dev", "/home/user/project", "/remote", false)
 
@@ -320,10 +321,10 @@ func TestRunRecreatesConnectionRootsFile(t *testing.T) {
 
 func TestUpdateDaemonRemoteRoots(t *testing.T) {
 	t.Run("populated on connection creation", func(t *testing.T) {
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 
 		_, err := mgr.createConnection("conn1", "/local", "/remote/project", daemon, false)
@@ -336,10 +337,10 @@ func TestUpdateDaemonRemoteRoots(t *testing.T) {
 	})
 
 	t.Run("accumulates across multiple connections on same daemon", func(t *testing.T) {
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 
 		_, err := mgr.createConnection("conn1", "/local1", "/remote/project1", daemon, false)
@@ -362,10 +363,10 @@ func TestUpdateDaemonRemoteRoots(t *testing.T) {
 	})
 
 	t.Run("skips empty remote roots", func(t *testing.T) {
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 
 		_, err := mgr.createConnection("conn1", "/local", "", daemon, false)
@@ -392,10 +393,10 @@ func TestConnectionByCWDSkipsBackground(t *testing.T) {
 }
 
 func TestConnectionByCWDBackgroundStillExplicitlyUsable(t *testing.T) {
-	mgr := NewConnectionManager()
+	mgr := NewConnectionManager(slog.LevelDebug)
 	defer mgr.Close()
 
-	daemon := newRemoteDaemon(&noopConnector{})
+	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	daemon.runCtx = mgr.runCtx
 	daemon.setState(ConnectionStateConnected)
 	_, createErr := mgr.createConnection("bg-conn", "/local", "/remote", daemon, true)
@@ -486,10 +487,10 @@ func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
 		childRoot := filepath.Join(parentRoot, "child")
 		test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
 
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 		_, err := mgr.createConnection("child-conn", childRoot, "/remote", daemon, false)
 		test.That(t, err, test.ShouldBeNil)
@@ -504,10 +505,10 @@ func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
 		childRoot := filepath.Join(parentRoot, "child")
 		test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
 
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 		_, err := mgr.createConnection("parent-conn", parentRoot, "/remote", daemon, false)
 		test.That(t, err, test.ShouldBeNil)
@@ -522,10 +523,10 @@ func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
 		childRoot := filepath.Join(parentRoot, "child")
 		test.That(t, os.MkdirAll(childRoot, DirPerms), test.ShouldBeNil)
 
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 		_, err := mgr.createConnection("fg-conn", childRoot, "/remote", daemon, false)
 		test.That(t, err, test.ShouldBeNil)
@@ -538,10 +539,10 @@ func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
 		rootA := t.TempDir()
 		rootB := t.TempDir()
 
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 		_, err := mgr.createConnection("connA", rootA, "/remote", daemon, false)
 		test.That(t, err, test.ShouldBeNil)
@@ -553,10 +554,10 @@ func TestCreateConnectionRejectsOverlappingRoots(t *testing.T) {
 	t.Run("empty root never conflicts", func(t *testing.T) {
 		root := t.TempDir()
 
-		mgr := NewConnectionManager()
+		mgr := NewConnectionManager(slog.LevelDebug)
 		defer mgr.Close()
 
-		daemon := newRemoteDaemon(&noopConnector{})
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 		daemon.runCtx = mgr.runCtx
 		_, err := mgr.createConnection("connA", root, "/remote", daemon, false)
 		test.That(t, err, test.ShouldBeNil)

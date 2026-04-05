@@ -3,14 +3,17 @@ package graft
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"golang.org/x/exp/jsonrpc2"
 
@@ -24,13 +27,34 @@ var (
 )
 
 // ServeLSP serves a stdio LSP server forwarding responses from the session's connection.
+// If the executable is not available on the remote (or there is no connection), it falls back
+// to executing the local binary directly.
 func (client *LocalClient) ServeLSP(ctx context.Context, executable string) error {
 	client.logger.InfoContext(ctx, "serving LSP", "executable", executable)
 
 	selectResp, err := client.selectConnection(ctx)
 	if err != nil {
-		return client.handleError(err)
+		fmt.Fprintln(os.Stderr, "failed to select connection; running locally")
+
+		return ExecLocalLSP(executable)
 	}
+
+	availResp, err := client.GetConnectionAvailableCommands(ctx,
+		&graftv1.GetConnectionAvailableCommandsRequest{
+			Pid:            client.ppid,
+			Cwd:            client.cwd,
+			ConnectionName: selectResp.GetConnectionName(),
+		})
+	if err != nil || !slices.ContainsFunc(availResp.GetCommands(), func(cmd string) bool {
+		return filepath.Base(cmd) == executable
+	}) {
+		fmt.Fprintln(os.Stderr, client.cwd, selectResp.GetConnectionName(), availResp.GetCommands())
+		fmt.Fprintln(os.Stderr, "failed to find remote lsp; running locally")
+
+		return ExecLocalLSP(executable)
+	}
+
+	fmt.Fprintln(os.Stderr, "will run remote lsp")
 
 	var lspArgs lspRewriterArgs
 
@@ -149,8 +173,9 @@ type lspBinder struct {
 func (l *lspBinder) Bind(ctx context.Context, conn *jsonrpc2.Connection) (jsonrpc2.ConnectionOptions, error) {
 	// TODO(erd): when to close?
 	bindCtx, cancelBindCtx := context.WithCancel(ctx)
+
 	//nolint:gosec // input is trusted
-	execCmd := exec.CommandContext(bindCtx, os.Args[0], "cmd", l.args.Executable)
+	execCmd := exec.CommandContext(bindCtx, os.Args[0], "run", l.args.Executable)
 
 	stdinPipe, err := execCmd.StdinPipe()
 	if err != nil {
@@ -209,9 +234,9 @@ func (l *lspBinder) Bind(ctx context.Context, conn *jsonrpc2.Connection) (jsonrp
 
 				var params any
 				if err := json.Unmarshal(v.Params, &params); err != nil {
-					if _, writeErr := frameWriter.Write(bindCtx, &jsonrpc2.Response{ID: v.ID, Error: err}); writeErr != nil {
-						continue
-					}
+					_, _ = frameWriter.Write(bindCtx, &jsonrpc2.Response{ID: v.ID, Error: err}) //nolint:errcheck
+
+					continue
 				}
 
 				rewriteLocalRemoteURIs(params, l.args.Remappings, false)
@@ -242,9 +267,9 @@ func (l *lspBinder) Bind(ctx context.Context, conn *jsonrpc2.Connection) (jsonrp
 
 					var result any
 					if err := clientResp.Await(bindCtx, &result); err != nil {
-						if _, writeErr := frameWriter.Write(bindCtx, &jsonrpc2.Response{ID: v.ID, Error: err}); writeErr != nil {
-							return
-						}
+						_, _ = frameWriter.Write(bindCtx, &jsonrpc2.Response{ID: v.ID, Error: err}) //nolint:errcheck
+
+						return
 					}
 
 					rewriteLocalRemoteURIs(result, l.args.Remappings, true)
@@ -453,6 +478,17 @@ func rewriteLocalRemoteURIs(value any, remappings []*graftv1.PathRemapping, forR
 			}
 		}
 	}
+}
+
+// ExecLocalLSP replaces the current process with the given executable, passing
+// through any arguments after "graft lsp <executable>".
+func ExecLocalLSP(executable string) error {
+	execPath, err := exec.LookPath(executable)
+	if err != nil {
+		return errors.Wrap(err)
+	}
+
+	return errors.Wrap(syscall.Exec(execPath, append([]string{executable}, os.Args[3:]...), os.Environ()))
 }
 
 type lspRewriterArgs struct {

@@ -98,6 +98,7 @@ func newRemoteDaemon(connector RemoteConnector, logLevel slog.Level) *remoteDaem
 		explicitPorts: map[string]PortForwardSpec{},
 	}
 	d.availableCommands.Store(&[]string{})
+	d.availableCommandsByDirectory.Store(&map[string][]string{})
 
 	return d
 }

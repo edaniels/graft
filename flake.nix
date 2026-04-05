@@ -19,7 +19,7 @@
         pname = "graft";
         inherit version;
         src = ./.;
-        vendorHash = "sha256-uzLT186eP38DlbndsGWlXeJdOkCQfT4P6I8WDaCH5Vc=";
+        vendorHash = "sha256-dxEgYsDC0R6yBiIswsnsHhGxyUlPCuAP8PTiBKZtnQE=";
         goSum = ./go.sum;
         env.CGO_ENABLED = "0";
 

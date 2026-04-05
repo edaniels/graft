@@ -104,7 +104,6 @@ func parseMiseOutput(output string) []string {
 }
 
 type cachedEnv struct {
-	env         []string
 	pathDirs    []string
 	configMtime time.Time
 	configPath  string
@@ -152,12 +151,12 @@ func NewEnvProviderSetWithProviders(candidates ...EnvProvider) *EnvProviderSet {
 	}
 }
 
-// Refresh refreshes env for the given seed directories plus all directories already
-// in the cache. Entries whose config files no longer exist are removed.
-// seedDirs are also used as trusted roots for mise.
-func (eps *EnvProviderSet) Refresh(ctx context.Context, seedDirs []string) {
+// DiscoverExtraSearchPaths discovers the environment for the given seed directories plus all directories already
+// in the cache. Entries whose config files no longer exist are removed. seedDirs are also used as trusted roots for
+// mise.
+func (eps *EnvProviderSet) DiscoverExtraSearchPaths(ctx context.Context, seedDirs []string) map[string][]string {
 	if len(eps.providers) == 0 {
-		return
+		return nil
 	}
 
 	// Update trusted roots on the mise provider so configs in seed dirs
@@ -168,25 +167,15 @@ func (eps *EnvProviderSet) Refresh(ctx context.Context, seedDirs []string) {
 		}
 	}
 
-	eps.mu.RLock()
-
-	dirs := make(map[string]struct{}, len(seedDirs)+len(eps.cache))
-	for _, d := range seedDirs {
-		dirs[d] = struct{}{}
+	discovedDirs := make(map[string][]string, len(seedDirs))
+	for _, dir := range seedDirs {
+		discovedDirs[dir] = eps.discoverExtraSearchPaths(ctx, dir)
 	}
 
-	for d := range eps.cache {
-		dirs[d] = struct{}{}
-	}
-
-	eps.mu.RUnlock()
-
-	for dir := range dirs {
-		eps.refreshDir(ctx, dir)
-	}
+	return discovedDirs
 }
 
-func (eps *EnvProviderSet) refreshDir(ctx context.Context, dir string) {
+func (eps *EnvProviderSet) discoverExtraSearchPaths(ctx context.Context, dir string) []string {
 	eps.mu.RLock()
 	existing, hasCached := eps.cache[dir]
 	eps.mu.RUnlock()
@@ -195,7 +184,7 @@ func (eps *EnvProviderSet) refreshDir(ctx context.Context, dir string) {
 		switch {
 		case existing.negative:
 			if time.Since(existing.negativeAt) < negativeCacheTTL {
-				return
+				return existing.pathDirs
 			}
 		case existing.configPath != "":
 			info, err := os.Stat(existing.configPath)
@@ -204,50 +193,27 @@ func (eps *EnvProviderSet) refreshDir(ctx context.Context, dir string) {
 				delete(eps.cache, dir)
 				eps.mu.Unlock()
 
-				return
+				return nil
 			}
 
 			if !info.ModTime().After(existing.configMtime) {
-				return
+				return existing.pathDirs
 			}
 		default:
 			// No trackable config file (e.g. mise walking up parent dirs).
 			// Re-capture periodically instead of every tick.
 			if time.Since(existing.capturedAt) < refreshInterval {
-				return
-			}
-		}
-	}
-
-	eps.resolveAndCache(ctx, dir)
-}
-
-// EnvForDir returns cached env for a directory, or captures on-demand on cache miss.
-func (eps *EnvProviderSet) EnvForDir(ctx context.Context, dir string) []string {
-	if len(eps.providers) == 0 {
-		return nil
-	}
-
-	eps.mu.RLock()
-	cached, ok := eps.cache[dir]
-	eps.mu.RUnlock()
-
-	if ok {
-		if cached.negative {
-			if time.Since(cached.negativeAt) < negativeCacheTTL {
 				return nil
 			}
-		} else {
-			return cached.env
 		}
 	}
 
-	return eps.resolveAndCache(ctx, dir)
+	return eps.discoverAndCacheSearchPaths(ctx, dir)
 }
 
-// resolveAndCache captures env for a directory and stores it in the cache.
+// discoverAndCacheSearchPaths captures env for a directory and stores it in the cache.
 // Returns the captured env (nil if negative).
-func (eps *EnvProviderSet) resolveAndCache(ctx context.Context, dir string) []string {
+func (eps *EnvProviderSet) discoverAndCacheSearchPaths(ctx context.Context, dir string) []string {
 	configPath, configMtime := eps.findConfigFile(dir)
 	env := eps.captureFromProviders(ctx, dir)
 
@@ -259,17 +225,18 @@ func (eps *EnvProviderSet) resolveAndCache(ctx context.Context, dir string) []st
 		return nil
 	}
 
+	pathDirs := extractPATHDirs(env)
+
 	eps.mu.Lock()
 	eps.cache[dir] = &cachedEnv{
-		env:         env,
-		pathDirs:    extractPATHDirs(env),
+		pathDirs:    pathDirs,
 		configMtime: configMtime,
 		configPath:  configPath,
 		capturedAt:  time.Now(),
 	}
 	eps.mu.Unlock()
 
-	return env
+	return pathDirs
 }
 
 // ShellHookPrefix returns a bash DEBUG trap that re-evaluates mise

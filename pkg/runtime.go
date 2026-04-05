@@ -44,7 +44,7 @@ func DumpGoroutines() {
 // mise) to scan beyond the shell's PATH.
 // TODO(erd): this needs to be dynamic as the PATH changes based on user selected shell
 // and corresponding profiles. Can probably just do a shell printenv PATH command.
-func collectCommandsFromPATH(extraPathDirs ...string) []string {
+func collectCommandsFromPATH(additionalSearchPaths map[string][]string) ([]string, map[string][]string) {
 	shellVar, shellPathVar := os.LookupEnv("SHELL")
 	if !shellPathVar {
 		shellVar = defaultShellPath
@@ -56,51 +56,52 @@ func collectCommandsFromPATH(extraPathDirs ...string) []string {
 	if err != nil {
 		slog.Debug("error getting PATH", "error", err)
 
-		return nil
+		return nil, nil
+	}
+
+	commandsByDirectory := make(map[string][]string, len(additionalSearchPaths))
+	for srcDir, paths := range additionalSearchPaths {
+		commandsByDirectory[srcDir] = collectExecutablesFromDirs(paths)
 	}
 
 	pathVar := strings.TrimSpace(string(pathVarBytes))
 
-	seen := map[string]bool{}
-
-	var collected []string
-
-	// Scan extra PATH dirs first so env-manager-provided commands appear.
-	for _, pathElem := range extraPathDirs {
-		collectExecutablesFromDir(pathElem, seen, &collected)
-	}
-
-	for pathElem := range strings.SplitSeq(pathVar, ":") {
-		collectExecutablesFromDir(pathElem, seen, &collected)
-	}
-
-	return collected
+	return collectExecutablesFromDirs(strings.Split(pathVar, ":")), commandsByDirectory
 }
 
 // collectExecutablesFromDir scans a directory for executable files and appends them
 // to collected, skipping names already in seen.
-func collectExecutablesFromDir(dir string, seen map[string]bool, collected *[]string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Debug("error reading directory", "for", dir, "error", err)
-		}
+func collectExecutablesFromDirs(dirs []string) []string {
+	seen := map[string]bool{}
 
-		return
-	}
+	var collected []string
 
-	for _, entry := range entries {
-		if entry.Type().IsDir() ||
-			seen[entry.Name()] {
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				slog.Debug("error reading directory", "for", dir, "error", err)
+			}
+
 			continue
 		}
 
-		if info, err := entry.Info(); err != nil || info.Mode()&0o111 == 0 {
-			continue
+		for _, entry := range entries {
+			if entry.Type().IsDir() ||
+				seen[entry.Name()] {
+				continue
+			}
+
+			if info, err := entry.Info(); err != nil || info.Mode()&0o111 == 0 {
+				// file not executable
+				continue
+			}
+
+			seen[entry.Name()] = true
+
+			collected = append(collected, filepath.Join(dir, entry.Name()))
 		}
-
-		seen[entry.Name()] = true
-
-		*collected = append(*collected, filepath.Join(dir, entry.Name()))
 	}
+
+	return collected
 }

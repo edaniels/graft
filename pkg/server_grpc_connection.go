@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -413,7 +414,10 @@ func (srv *Server) RemoveConnection(
 // DiscoverCommands streams all commands a daemon thinks it can allow a client to forward.
 // TODO(erd): the user and some kind of session probably matters, but avoid for now.
 func (srv *Server) DiscoverCommands(req *graftv1.DiscoverCommandsRequest, server graftv1.GraftService_DiscoverCommandsServer) error {
-	var knownCommands []string
+	var (
+		knownCommands            []string
+		knownCommandsByDirectory map[string][]string
+	)
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -426,22 +430,28 @@ func (srv *Server) DiscoverCommands(req *graftv1.DiscoverCommandsRequest, server
 
 	for {
 		// Periodic refresh for known directories via env providers.
+		var pathsFromEnvProviders map[string][]string
 		if srv.envProviders != nil && len(req.GetDirectories()) > 0 {
-			srv.envProviders.Refresh(server.Context(), req.GetDirectories())
+			pathsFromEnvProviders = srv.envProviders.DiscoverExtraSearchPaths(server.Context(), req.GetDirectories())
 		}
 
-		var extraPathDirs []string
-		if srv.envProviders != nil {
-			extraPathDirs = srv.envProviders.ExtraPATHDirs()
-		}
-
-		commands := collectCommandsFromPATH(extraPathDirs...)
-		if !slices.Equal(knownCommands, commands) {
+		commands, commandsByDirectory := collectCommandsFromPATH(pathsFromEnvProviders)
+		if !slices.Equal(knownCommands, commands) || !reflect.DeepEqual(knownCommandsByDirectory, commandsByDirectory) {
 			knownCommands = commands
 
-			err := server.Send(&graftv1.DiscoverCommandsResponse{
+			resp := &graftv1.DiscoverCommandsResponse{
 				Commands: commands,
-			})
+			}
+			if len(commandsByDirectory) != 0 {
+				resp.CommandsByDirectory = make(map[string]*graftv1.DiscoveredCommands, len(commandsByDirectory))
+				for dir, cmds := range commandsByDirectory {
+					resp.CommandsByDirectory[dir] = &graftv1.DiscoveredCommands{
+						Commands: cmds,
+					}
+				}
+			}
+
+			err := server.Send(resp)
 			if err != nil {
 				slog.DebugContext(server.Context(), "error sending response", "error", err)
 
@@ -493,6 +503,34 @@ func (srv *Server) UpdateConnectionRoots(
 	srv.persistConfig()
 
 	return &graftv1.UpdateConnectionRootsResponse{}, nil
+}
+
+func (srv *Server) GetConnectionAvailableCommands(
+	ctx context.Context,
+	req *graftv1.GetConnectionAvailableCommandsRequest,
+) (*graftv1.GetConnectionAvailableCommandsResponse, error) {
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	updateErr := srv.sessMgr.UpdateSessionCWD(ctx,
+		req.GetPid(), req.GetCwd())
+	if updateErr != nil {
+		return nil, updateErr
+	}
+
+	sess, err := srv.sessMgr.SessionByPID(req.GetPid())
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := srv.sessMgr.selectConnection(ctx, sess, req.GetConnectionName(), req.GetCwd())
+	if err != nil {
+		return nil, err
+	}
+
+	return &graftv1.GetConnectionAvailableCommandsResponse{
+		Commands: conn.AvailableCommands(),
+	}, nil
 }
 
 // UpdateConnectionForwardCommands adds the specified commands to be forwarded for a connection.

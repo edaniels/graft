@@ -575,13 +575,7 @@ func TestCreateConnection_EmptyRemoteRoot_WillSync(t *testing.T) {
 	mgr := NewConnectionManager(slog.LevelDebug)
 	defer mgr.Close()
 
-	connector := &fakeInitConnector{
-		initFunc: func(ctx context.Context) (bool, error) {
-			return true, nil
-		},
-	}
-
-	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: connector})
+	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: &noopConnector{}})
 
 	destURL, err := url.Parse("ssh://host")
 	test.That(t, err, test.ShouldBeNil)

@@ -69,6 +69,8 @@ service GraftService {
   // UpdateConnectionRoots updates the local and/or remote root directories for a connection.
   rpc UpdateConnectionRoots(UpdateConnectionRootsRequest) returns (UpdateConnectionRootsResponse) {}
 
+  rpc GetConnectionAvailableCommands(GetConnectionAvailableCommandsRequest) returns (GetConnectionAvailableCommandsResponse) {}
+
   // UpdateConnectionForwardCommands adds the specified commands to be forwarded for a connection.
   //
   // TODO(erd): should this be replace or insert?
@@ -317,8 +319,13 @@ message DiscoverCommandsRequest {
   repeated string directories = 2; // remote root directories to scan for env manager configs (e.g. mise, direnv).
 }
 
+message DiscoveredCommands {
+  repeated string commands = 1;
+}
+
 message DiscoverCommandsResponse {
   repeated string commands = 1;
+  map<string, DiscoveredCommands> commands_by_directory = 2;
 }
 
 message UpdateConnectionRootsRequest {
@@ -328,6 +335,16 @@ message UpdateConnectionRootsRequest {
 }
 
 message UpdateConnectionRootsResponse {}
+
+message GetConnectionAvailableCommandsRequest {
+  uint64 pid = 1;
+  string cwd = 2;
+  string connection_name = 3;
+}
+
+message GetConnectionAvailableCommandsResponse {
+  repeated string commands = 1;
+}
 
 message UpdateConnectionForwardCommandsRequest {
   string connection_name = 1;
@@ -415,6 +432,7 @@ message SessionSelectConnectionResponse {
 message CommandForwarding {
   string local = 1;
   string remote = 2;
+  bool active = 3;
 }
 
 message CommandForwardings {

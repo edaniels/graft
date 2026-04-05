@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/edaniels/graft/errors"
 	graftv1 "github.com/edaniels/graft/gen/proto/graft/v1"
@@ -67,9 +68,10 @@ type remoteDaemon struct {
 	portForwards      map[string]*activePortForward
 	explicitPorts     map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
 
-	remoteRoots       atomic.Pointer[[]string]
-	availableCommands atomic.Pointer[[]string]
-	activeWorkers     sync.WaitGroup
+	remoteRoots                  atomic.Pointer[[]string]
+	availableCommands            atomic.Pointer[[]string]
+	availableCommandsByDirectory atomic.Pointer[map[string][]string]
+	activeWorkers                sync.WaitGroup
 
 	installMu       sync.Mutex
 	reinstalledOnce bool
@@ -157,8 +159,8 @@ func (d *remoteDaemon) lockedRemoteClientConn() (*grpc.ClientConn, error) {
 }
 
 // AvailableCommands returns the commands discovered on the remote.
-func (d *remoteDaemon) AvailableCommands() []string {
-	return *d.availableCommands.Load()
+func (d *remoteDaemon) AvailableCommands() ([]string, map[string][]string) {
+	return *d.availableCommands.Load(), *d.availableCommandsByDirectory.Load()
 }
 
 // PortForwardStatuses returns the current status of all port forwards.
@@ -461,6 +463,7 @@ func (d *remoteDaemon) setConnectedState(
 	d.mu.Unlock()
 
 	d.availableCommands.Store(&[]string{})
+	d.availableCommandsByDirectory.Store(&map[string][]string{})
 }
 
 // discover runs OS/arch/home directory detection on the remote host, or returns
@@ -937,7 +940,15 @@ func (d *remoteDaemon) monitor() {
 				return
 			}
 
-			d.availableCommands.Store(&resp.Commands)
+			clonedResp := proto.CloneOf(resp)
+			d.availableCommands.Store(&clonedResp.Commands)
+
+			cmdsByDir := make(map[string][]string, len(clonedResp.GetCommandsByDirectory()))
+			for dir, cmds := range clonedResp.GetCommandsByDirectory() {
+				cmdsByDir[dir] = cmds.GetCommands()
+			}
+
+			d.availableCommandsByDirectory.Store(&cmdsByDir)
 		}
 	}()
 }

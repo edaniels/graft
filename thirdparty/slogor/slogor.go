@@ -11,8 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-	"unicode"
-	"unicode/utf8"
 )
 
 type GroupOrAttrs struct {
@@ -236,11 +234,7 @@ func appendAttr(buf []byte, attr slog.Attr, addColor func([]byte, sgrCode) []byt
 	}
 
 	s := attr.Value.String()
-	if needsQuoting(s) {
-		buf = strconv.AppendQuote(buf, s)
-	} else {
-		buf = append(buf, s...)
-	}
+	buf = append(buf, s...)
 
 	buf = addColor(buf, reset)
 	buf = append(buf, ' ')
@@ -251,30 +245,4 @@ func appendAttr(buf []byte, attr slog.Attr, addColor func([]byte, sgrCode) []byt
 // Err creates a slog.Attr error from anything.
 func Err(err any) slog.Attr {
 	return slog.Any("err", err)
-}
-
-// needsQuoting is a (minor) adapted version of Go's own function, found in
-// https://cs.opensource.google/go/go/+/refs/tags/go1.23.2:src/log/slog/text_handler.go;l=141-163
-func needsQuoting(s string) bool {
-	if len(s) == 0 {
-		return true
-	}
-	for i := 0; i < len(s); {
-		b := s[i]
-		if b < utf8.RuneSelf {
-			if b != '\\' && (b == ' ' || b == '=' || b == '"') {
-				return true
-			}
-			i++
-
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError || unicode.IsSpace(r) || !unicode.IsPrint(r) {
-			return true
-		}
-		i += size
-	}
-
-	return false
 }

@@ -37,7 +37,7 @@ fi
 shim_exists=0
 cmd=$(basename $1)
 PATH=$_GC_SHIMS_PATH type -P $cmd </dev/null &>/dev/null || shim_exists=$?
-if [ "$shim_exists" -eq 0 ]; then
+if [ -n "$_GC_SHIMS_PATH" ] && [ "$shim_exists" -eq 0 ]; then
 	graft run-shimmed-cmd --pid=$GRAFT_SESSION --cwd=$(pwd) --sudo --cmd=$cmd -- $args
 else
 	exec $(basename $0) $@

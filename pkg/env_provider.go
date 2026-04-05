@@ -10,6 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mutagen-io/mutagen/pkg/filesystem"
+
+	"github.com/edaniels/graft/errors"
 )
 
 // EnvProvider captures directory-specific environment from tools like mise.
@@ -56,8 +60,13 @@ func (m *miseEnvProvider) CaptureEnv(ctx context.Context, dir string) ([]string,
 	ctx, cancel := context.WithTimeout(ctx, captureTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "mise", "env", "-C", dir)
-	cmd.Dir = dir
+	normalizedDir, err := filesystem.Normalize(dir)
+	if err != nil {
+		return nil, errors.WrapPrefix(err, "error normalizing directory for env capture")
+	}
+
+	cmd := exec.CommandContext(ctx, "mise", "env", "-C", normalizedDir)
+	cmd.Dir = normalizedDir
 
 	if trustEnv := m.trustedConfigPathsEnv(); trustEnv != "" {
 		cmd.Env = append(os.Environ(), trustEnv)
@@ -65,7 +74,7 @@ func (m *miseEnvProvider) CaptureEnv(ctx context.Context, dir string) ([]string,
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		slog.DebugContext(ctx, "mise env failed", "dir", dir, "error", err)
+		slog.DebugContext(ctx, "mise env failed", "dir", normalizedDir, "error", err)
 
 		return nil, nil
 	}

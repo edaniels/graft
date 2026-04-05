@@ -1,11 +1,10 @@
 package graft
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	ssh_config "github.com/kevinburke/ssh_config"
+	"github.com/mutagen-io/mutagen/pkg/filesystem"
 
 	"github.com/edaniels/graft/errors"
 )
@@ -76,12 +75,14 @@ func resolveSSHConfig(resolver sshConfigResolver, hostAlias, fallbackPort, fallb
 	}
 
 	if identityFiles, err := resolver.GetAll(hostAlias, "IdentityFile"); err == nil {
-		expanded := make([]string, 0, len(identityFiles))
+		normalized := make([]string, 0, len(identityFiles))
 		for _, f := range identityFiles {
-			expanded = append(expanded, expandTilde(f))
+			if norm, err := filesystem.Normalize(f); err == nil {
+				normalized = append(normalized, norm)
+			}
 		}
 
-		resolved.IdentityFiles = expanded
+		resolved.IdentityFiles = normalized
 	}
 
 	if proxyCmd, err := resolver.Get(hostAlias, "ProxyCommand"); err == nil && proxyCmd != "" {
@@ -104,18 +105,4 @@ func substituteProxyTokens(cmd, originalHost, hostname, port, user string) strin
 	cmd = strings.ReplaceAll(cmd, sentinel, "%")
 
 	return cmd
-}
-
-// expandTilde replaces a leading ~ with the user's home directory.
-func expandTilde(path string) string {
-	if !strings.HasPrefix(path, "~") {
-		return path
-	}
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-
-	return filepath.Join(homeDir, path[1:])
 }

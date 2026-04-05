@@ -128,12 +128,3 @@ func TestSubstituteProxyTokens(t *testing.T) {
 	result = substituteProxyTokens("echo %%h is %h", "alias", "real.host", "22", "user")
 	test.That(t, result, test.ShouldEqual, "echo %h is real.host")
 }
-
-func TestExpandTilde(t *testing.T) {
-	homeDir, err := os.UserHomeDir()
-	test.That(t, err, test.ShouldBeNil)
-
-	test.That(t, expandTilde("~/.ssh/id_rsa"), test.ShouldEqual, filepath.Join(homeDir, ".ssh/id_rsa"))
-	test.That(t, expandTilde("/absolute/path"), test.ShouldEqual, "/absolute/path")
-	test.That(t, expandTilde("relative/path"), test.ShouldEqual, "relative/path")
-}

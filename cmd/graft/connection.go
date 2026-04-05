@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -51,11 +50,21 @@ var connectionSetRootCmd = &cobra.Command{
 			return errors.Wrap(setErr)
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "updated %s\n", connName)
-		fmt.Fprintf(cmd.ErrOrStderr(), "  local root:   %s\n", absDir)
+		return nil
+	},
+}
 
-		if remoteDir != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  remote root:  %s\n", remoteDir)
+var connCmdShellTo string
+
+var connectionCommandsCmd = &cobra.Command{
+	Use:   "available-commands",
+	Short: "Print available commands; helpful for debugging shim availability",
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		client, ctx := newClient(cmd.Context(), true)
+		defer client.Close()
+
+		if err := client.PrintConnectionAvailableCommands(ctx, connCmdShellTo); err != nil {
+			return errors.Wrap(err)
 		}
 
 		return nil
@@ -63,6 +72,10 @@ var connectionSetRootCmd = &cobra.Command{
 }
 
 func init() {
+	connectionCmd.Flags().StringVarP(&connCmdShellTo, "to", "t", "", "Target connection")
+	connectionCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
+
 	connectionCmd.AddCommand(connectionSetRootCmd)
+	connectionCmd.AddCommand(connectionCommandsCmd)
 	rootCmd.AddCommand(connectionCmd)
 }

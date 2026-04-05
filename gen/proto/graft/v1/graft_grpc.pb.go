@@ -30,6 +30,7 @@ const (
 	GraftService_RemoveConnection_FullMethodName                = "/graft.v1.GraftService/RemoveConnection"
 	GraftService_DiscoverCommands_FullMethodName                = "/graft.v1.GraftService/DiscoverCommands"
 	GraftService_UpdateConnectionRoots_FullMethodName           = "/graft.v1.GraftService/UpdateConnectionRoots"
+	GraftService_GetConnectionAvailableCommands_FullMethodName  = "/graft.v1.GraftService/GetConnectionAvailableCommands"
 	GraftService_UpdateConnectionForwardCommands_FullMethodName = "/graft.v1.GraftService/UpdateConnectionForwardCommands"
 	GraftService_RemoveConnectionForwardCommands_FullMethodName = "/graft.v1.GraftService/RemoveConnectionForwardCommands"
 	GraftService_SyncFilesToConnection_FullMethodName           = "/graft.v1.GraftService/SyncFilesToConnection"
@@ -96,6 +97,7 @@ type GraftServiceClient interface {
 	DiscoverCommands(ctx context.Context, in *DiscoverCommandsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DiscoverCommandsResponse], error)
 	// UpdateConnectionRoots updates the local and/or remote root directories for a connection.
 	UpdateConnectionRoots(ctx context.Context, in *UpdateConnectionRootsRequest, opts ...grpc.CallOption) (*UpdateConnectionRootsResponse, error)
+	GetConnectionAvailableCommands(ctx context.Context, in *GetConnectionAvailableCommandsRequest, opts ...grpc.CallOption) (*GetConnectionAvailableCommandsResponse, error)
 	// UpdateConnectionForwardCommands adds the specified commands to be forwarded for a connection.
 	//
 	// TODO(erd): should this be replace or insert?
@@ -275,6 +277,16 @@ func (c *graftServiceClient) UpdateConnectionRoots(ctx context.Context, in *Upda
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdateConnectionRootsResponse)
 	err := c.cc.Invoke(ctx, GraftService_UpdateConnectionRoots_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) GetConnectionAvailableCommands(ctx context.Context, in *GetConnectionAvailableCommandsRequest, opts ...grpc.CallOption) (*GetConnectionAvailableCommandsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetConnectionAvailableCommandsResponse)
+	err := c.cc.Invoke(ctx, GraftService_GetConnectionAvailableCommands_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -510,6 +522,7 @@ type GraftServiceServer interface {
 	DiscoverCommands(*DiscoverCommandsRequest, grpc.ServerStreamingServer[DiscoverCommandsResponse]) error
 	// UpdateConnectionRoots updates the local and/or remote root directories for a connection.
 	UpdateConnectionRoots(context.Context, *UpdateConnectionRootsRequest) (*UpdateConnectionRootsResponse, error)
+	GetConnectionAvailableCommands(context.Context, *GetConnectionAvailableCommandsRequest) (*GetConnectionAvailableCommandsResponse, error)
 	// UpdateConnectionForwardCommands adds the specified commands to be forwarded for a connection.
 	//
 	// TODO(erd): should this be replace or insert?
@@ -599,6 +612,9 @@ func (UnimplementedGraftServiceServer) DiscoverCommands(*DiscoverCommandsRequest
 }
 func (UnimplementedGraftServiceServer) UpdateConnectionRoots(context.Context, *UpdateConnectionRootsRequest) (*UpdateConnectionRootsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateConnectionRoots not implemented")
+}
+func (UnimplementedGraftServiceServer) GetConnectionAvailableCommands(context.Context, *GetConnectionAvailableCommandsRequest) (*GetConnectionAvailableCommandsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConnectionAvailableCommands not implemented")
 }
 func (UnimplementedGraftServiceServer) UpdateConnectionForwardCommands(context.Context, *UpdateConnectionForwardCommandsRequest) (*UpdateConnectionForwardCommandsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateConnectionForwardCommands not implemented")
@@ -849,6 +865,24 @@ func _GraftService_UpdateConnectionRoots_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GraftServiceServer).UpdateConnectionRoots(ctx, req.(*UpdateConnectionRootsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_GetConnectionAvailableCommands_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetConnectionAvailableCommandsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).GetConnectionAvailableCommands(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_GetConnectionAvailableCommands_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).GetConnectionAvailableCommands(ctx, req.(*GetConnectionAvailableCommandsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1132,6 +1166,10 @@ var GraftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateConnectionRoots",
 			Handler:    _GraftService_UpdateConnectionRoots_Handler,
+		},
+		{
+			MethodName: "GetConnectionAvailableCommands",
+			Handler:    _GraftService_GetConnectionAvailableCommands_Handler,
 		},
 		{
 			MethodName: "UpdateConnectionForwardCommands",

@@ -3,26 +3,33 @@ package graft
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
+
+	"go.viam.com/test"
 )
 
 func TestCollectCommandsFromPATH(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDirGlobal := t.TempDir()
+	tempDirByDir1 := t.TempDir()
+	tempDirByDir2 := t.TempDir()
 
-	exec1, err := os.Create(filepath.Join(tempDir, "exec1"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	exec1, err := os.Create(filepath.Join(tempDirGlobal, "exec1"))
+	test.That(t, err, test.ShouldBeNil)
 
-	exec2, err := os.Create(filepath.Join(tempDir, "exec2"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	exec2, err := os.Create(filepath.Join(tempDirGlobal, "exec2"))
+	test.That(t, err, test.ShouldBeNil)
 
-	_ = exec1
-	_ = exec2
-	newPath := tempDir
+	exec3, err := os.Create(filepath.Join(tempDirByDir1, "exec3"))
+	test.That(t, err, test.ShouldBeNil)
+	exec4, err := os.Create(filepath.Join(tempDirByDir1, "exec4"))
+	test.That(t, err, test.ShouldBeNil)
+
+	exec5, err := os.Create(filepath.Join(tempDirByDir2, "exec5"))
+	test.That(t, err, test.ShouldBeNil)
+	exec6, err := os.Create(filepath.Join(tempDirByDir2, "exec6"))
+	test.That(t, err, test.ShouldBeNil)
+
+	newPath := tempDirGlobal
 
 	curPath := os.Getenv("PATH")
 	if curPath != "" {
@@ -31,29 +38,26 @@ func TestCollectCommandsFromPATH(t *testing.T) {
 
 	t.Setenv("PATH", newPath)
 
-	collected := collectCommandsFromPATH()
-	if slices.Contains(collected, exec1.Name()) {
-		t.Fatalf("collected should not contain %s but it did", exec1.Name())
-	}
+	collected, byDir := collectCommandsFromPATH(nil)
+	test.That(t, collected, test.ShouldNotContain, exec1.Name())
+	test.That(t, collected, test.ShouldNotContain, exec2.Name())
+	test.That(t, byDir, test.ShouldBeEmpty)
 
-	if slices.Contains(collected, exec2.Name()) {
-		t.Fatalf("collected should not contain %s but it did", exec1.Name())
-	}
+	test.That(t, exec1.Chmod(0o777), test.ShouldBeNil)
+	test.That(t, exec2.Chmod(0o777), test.ShouldBeNil)
+	test.That(t, exec3.Chmod(0o777), test.ShouldBeNil)
+	test.That(t, exec4.Chmod(0o777), test.ShouldBeNil)
+	test.That(t, exec5.Chmod(0o777), test.ShouldBeNil)
+	test.That(t, exec6.Chmod(0o777), test.ShouldBeNil)
 
-	if err := exec1.Chmod(0o777); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := exec2.Chmod(0o777); err != nil {
-		t.Fatal(err)
-	}
-
-	collected = collectCommandsFromPATH()
-	if !slices.Contains(collected, exec1.Name()) {
-		t.Fatalf("collected should contain %s but it didn't", exec1.Name())
-	}
-
-	if !slices.Contains(collected, exec2.Name()) {
-		t.Fatalf("collected should contain %s but it didn't", exec1.Name())
-	}
+	collected, byDir = collectCommandsFromPATH(map[string][]string{
+		"prov1": {tempDirByDir1, tempDirByDir2},
+		"prov2": {tempDirByDir2},
+	})
+	test.That(t, collected, test.ShouldContain, exec1.Name())
+	test.That(t, collected, test.ShouldContain, exec2.Name())
+	test.That(t, byDir, test.ShouldResemble, map[string][]string{
+		"prov1": {exec3.Name(), exec4.Name(), exec5.Name(), exec6.Name()},
+		"prov2": {exec5.Name(), exec6.Name()},
+	})
 }

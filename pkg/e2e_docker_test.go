@@ -876,7 +876,7 @@ func dockerExec(t *testing.T, containerID string, cmd string) {
 // TestEnvProviderDiscoveryE2E verifies that the env provider system discovers
 // binaries from mise-managed PATH entries on a real remote via SSH, and that
 // newly added directories are picked up over time.
-func TestEnvProviderDiscoveryE2E(t *testing.T) {
+func TestEnvProviderDiscoveryE2E(t *testing.T) { //nolint:gocognit
 	requireDocker(t)
 	env := getOrSetupE2EEnv(t)
 
@@ -943,12 +943,14 @@ chown -R testuser:testuser /home/testuser/project`)
 
 	go func() {
 		for {
-			cmds := conn.daemon.AvailableCommands()
-			for _, cmd := range cmds {
-				if filepath.Base(cmd) == "graft-test-tool" {
-					close(found)
+			_, byDir := conn.daemon.AvailableCommands()
+			for dir, cmds := range byDir {
+				for _, cmd := range cmds {
+					if dir == "/home/testuser/project" && filepath.Base(cmd) == "graft-test-tool" {
+						close(found)
 
-					return
+						return
+					}
 				}
 			}
 
@@ -1005,12 +1007,15 @@ chmod +x /usr/local/bin/mise`)
 
 	go func() {
 		for {
-			cmds := conn.daemon.AvailableCommands()
-			for _, cmd := range cmds {
-				if filepath.Base(cmd) == "graft-extra-tool" {
-					close(found2)
+			// TODO(erd): test me
+			_, byDir := conn.daemon.AvailableCommands()
+			for dir, cmds := range byDir {
+				for _, cmd := range cmds {
+					if dir == "/home/testuser/project" && filepath.Base(cmd) == "graft-extra-tool" {
+						close(found2)
 
-					return
+						return
+					}
 				}
 			}
 

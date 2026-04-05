@@ -189,7 +189,7 @@ func (mgr *SessionManager) tickReconcileSession(runCtx context.Context, sess *Se
 		slog.DebugContext(runCtx, "error reading session directory", "error", err)
 	}
 
-	newForwardings, err := mgr.gatherDesiredShimsForSession(runCtx, sess, resolvedConn)
+	newForwardings, err := mgr.resolveForwardedCommandsForSession(runCtx, sess, resolvedConn)
 	if err != nil {
 		slog.DebugContext(runCtx, "error gathering desired shims for session", "error", err)
 
@@ -249,9 +249,9 @@ func (mgr *SessionManager) writeSessionConnectionFile(sess *Session, connName st
 	}
 }
 
-// gatherDesiredShimsForSession collects all available commands that a session could run based on established connections and
+// resolveForwardedCommandsForSession collects all available commands that a session could run based on established connections and
 // the session's desired state.
-func (mgr *SessionManager) gatherDesiredShimsForSession(
+func (mgr *SessionManager) resolveForwardedCommandsForSession(
 	runCtx context.Context, sess *Session, selectedConn *Connection,
 ) (map[string]ForwardedCommand, error) {
 	newForwardings := map[string]ForwardedCommand{}
@@ -267,7 +267,7 @@ func (mgr *SessionManager) gatherDesiredShimsForSession(
 		// make a mapping of base(path_to_command) => path_to_command (e.g. bash => /usr/bin/bash)
 		// This is helpful when running a command through a shell wrapper that may not source its PATH
 		// in the same way in which we originally found the command.
-		availableCommandsFromConn := conn.daemon.AvailableCommands()
+		availableCommandsFromConn := conn.AvailableCommands()
 
 		localRemoteCommands := make(map[string]string, len(availableCommandsFromConn))
 		for _, cmd := range availableCommandsFromConn {
@@ -588,7 +588,7 @@ func (mgr *SessionManager) selectConnectionForCommand(
 	}
 
 	// we want to select the command we found from the PATH, if possible
-	availableCommandsFromConn := conn.daemon.AvailableCommands()
+	availableCommandsFromConn := conn.AvailableCommands()
 
 	var newCommand string
 

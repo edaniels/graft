@@ -100,6 +100,9 @@ func (srv *Server) SessionShimmedCommands(
 	resolvedConn, _ := srv.sessMgr.resolveSessionConnection(ctx, sess)
 	fwdings := srv.sessMgr.DesiredForwardingsForSession(ctx, sess, resolvedConn)
 
+	// dont care about the error, just the potential for results
+	resolved, _ := srv.sessMgr.resolveForwardedCommandsForSession(ctx, sess, resolvedConn) //nolint:errcheck
+
 	destCommands := make(map[string]*graftv1.CommandForwardings, len(fwdings))
 
 	for dest, fwds := range fwdings {
@@ -107,9 +110,11 @@ func (srv *Server) SessionShimmedCommands(
 
 		for _, fwd := range fwds {
 			localName := fwd.LocalName(dest)
+			_, ok := resolved[localName]
 			commands = append(commands, &graftv1.CommandForwarding{
 				Local:  localName,
 				Remote: fwd.Name,
+				Active: ok,
 			})
 		}
 

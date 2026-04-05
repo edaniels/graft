@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"hash/fnv"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -683,4 +684,25 @@ func buildLocalBinary(ctx context.Context, osName, archName string) (string, err
 	}
 
 	return binPath, nil
+}
+
+func (conn *Connection) AvailableCommands() []string {
+	global, byDir := conn.daemon.AvailableCommands()
+
+	collected := map[string]struct{}{}
+	// TODO(erd): we should make the env provider actually dictate the ordering of commands so that we don't have
+	// different semantics for how PATHs are searched
+	for _, cmd := range byDir[conn.RemoteRoot()] {
+		collected[cmd] = struct{}{}
+	}
+
+	for _, cmd := range global {
+		if _, ok := collected[cmd]; ok {
+			continue
+		}
+
+		collected[cmd] = struct{}{}
+	}
+
+	return slices.Collect(maps.Keys(collected))
 }

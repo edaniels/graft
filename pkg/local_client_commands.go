@@ -294,7 +294,7 @@ func (client *LocalClient) PrintShimmedCommands(ctx context.Context) error {
 		fmt.Fprintf(client.outWriter, "%s\n", dest)
 
 		for _, cmd := range cmds.GetCommands() {
-			fmt.Fprintf(client.errWriter, "\t%s (%s)\n", cmd.GetLocal(), cmd.GetRemote())
+			fmt.Fprintf(client.outWriter, "\t%s (%s) [active=%t]\n", cmd.GetLocal(), cmd.GetRemote(), cmd.GetActive())
 		}
 	}
 
@@ -514,6 +514,24 @@ func (client *LocalClient) SetConnectionRoots(ctx context.Context, connName, loc
 
 	if remoteRoot != "" {
 		fmt.Fprintf(client.outWriter, "  remote root:  %s\n", remoteRoot)
+	}
+
+	return nil
+}
+
+func (client *LocalClient) PrintConnectionAvailableCommands(ctx context.Context, connName string) error {
+	resp, err := client.GetConnectionAvailableCommands(ctx,
+		&graftv1.GetConnectionAvailableCommandsRequest{
+			Pid:            client.ppid,
+			Cwd:            client.cwd,
+			ConnectionName: connName,
+		})
+	if err != nil {
+		return client.handleError(err)
+	}
+
+	for _, cmd := range resp.GetCommands() {
+		fmt.Fprintln(client.outWriter, cmd)
 	}
 
 	return nil

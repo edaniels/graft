@@ -1,8 +1,10 @@
 module github.com/edaniels/graft
 
-go 1.26.0
+go 1.26.1
 
 replace github.com/mutagen-io/mutagen => ./thirdparty/mutagen
+
+replace gitlab.com/greyxor/slogor => ./thirdparty/slogor
 
 tool (
 	github.com/golangci/golangci-lint/v2/cmd/golangci-lint
@@ -269,7 +271,7 @@ require (
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

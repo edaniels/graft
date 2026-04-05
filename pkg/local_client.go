@@ -33,6 +33,9 @@ type LocalClient struct {
 	*grpc.ClientConn
 	graftv1.GraftServiceClient
 
+	ppid uint64
+	cwd  string
+
 	outWriter             io.WriteCloser
 	errWriter             io.WriteCloser
 	handleErrorMiddleware func(err error) error
@@ -135,7 +138,17 @@ func NewLocalClient(
 		handleErr = func(err error) error { return err }
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		cancel()
+
+		return nil, nil, errors.WrapPrefix(err, "error getting current working directory")
+	}
+
 	client := &LocalClient{
+		cwd:  cwd,
+		ppid: uint64(os.Getppid()), //nolint:gosec // overflow okay
+
 		ClientConn:            clientConn,
 		GraftServiceClient:    svcClient,
 		cancel:                cancel,

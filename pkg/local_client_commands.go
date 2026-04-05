@@ -141,7 +141,7 @@ func (client *LocalClient) PrintStatus(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Fprint(client.errWriter, s)
+	fmt.Fprint(client.outWriter, s)
 
 	return nil
 }
@@ -193,13 +193,13 @@ func (client *LocalClient) PrintDaemonLogs(ctx context.Context) error {
 
 	logs := resp.GetRecentLogs()
 	if len(logs) == 0 {
-		fmt.Fprintln(client.errWriter, "No recent logs")
+		fmt.Fprintln(client.outWriter, "No recent logs")
 
 		return nil
 	}
 
 	for _, logLine := range logs {
-		RenderJSONLogLine(client.errWriter, logLine)
+		RenderJSONLogLine(client.outWriter, logLine)
 	}
 
 	return nil
@@ -217,7 +217,7 @@ func (client *LocalClient) PrintDaemonStatus(ctx context.Context, connectionName
 		return client.handleError(err)
 	}
 
-	w := client.errWriter
+	w := client.outWriter
 
 	healthy := color.GreenString("healthy")
 	if !resp.GetHealthy() {
@@ -243,7 +243,7 @@ func (client *LocalClient) PrintDaemonStatus(ctx context.Context, connectionName
 
 // Watch polls getFn every second, overwriting any printed output until the context is cancelled.
 func (client *LocalClient) Watch(ctx context.Context, getFn func(context.Context) (string, error)) error {
-	fw := newFlushingWriter(client.errWriter)
+	fw := newFlushingWriter(client.outWriter)
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -282,21 +282,16 @@ func (client *LocalClient) RemoveConnection(ctx context.Context, name string) er
 
 // PrintShimmedCommands prints a lis tof this session's commands being shimmed and where to.
 func (client *LocalClient) PrintShimmedCommands(ctx context.Context) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return client.handleError(err)
-	}
-
 	resp, err := client.SessionShimmedCommands(ctx, &graftv1.SessionShimmedCommandsRequest{
-		Pid: uint64(os.Getppid()), //nolint:gosec // overflow okay
-		Cwd: cwd,
+		Pid: client.ppid,
+		Cwd: client.cwd,
 	})
 	if err != nil {
 		return client.handleError(err)
 	}
 
 	for dest, cmds := range resp.GetDestinationCommands() {
-		fmt.Fprintf(client.errWriter, "%s\n", dest)
+		fmt.Fprintf(client.outWriter, "%s\n", dest)
 
 		for _, cmd := range cmds.GetCommands() {
 			fmt.Fprintf(client.errWriter, "\t%s (%s)\n", cmd.GetLocal(), cmd.GetRemote())
@@ -326,7 +321,7 @@ func (client *LocalClient) Ping(ctx context.Context) error {
 		}
 
 		afterPing := time.Now()
-		fmt.Fprintf(client.errWriter,
+		fmt.Fprintf(client.outWriter,
 			"%s=%s rtt=%s \n",
 			color.GreenString("remote->local"),
 			afterPing.Sub(time.Unix(0, pingResp.GetLocalTimeUnixNanos())).String(),
@@ -384,13 +379,13 @@ func (client *LocalClient) InitializeRemoteConnection(ctx context.Context, param
 		}
 	}
 
-	fmt.Fprintf(client.errWriter, "initializing %s\n", params.Destination)
+	fmt.Fprintf(client.outWriter, "initializing %s\n", params.Destination)
 
 	resp, err := client.InitializeSSHConnection(ctx, &graftv1.InitializeSSHConnectionRequest{
 		Name:        params.Name,
 		Destination: params.Destination,
 		UserName:    params.Username,
-		Pid:         uint64(os.Getppid()), //nolint:gosec // overflow okay
+		Pid:         client.ppid,
 		LocalRoot:   params.LocalRoot,
 		RemoteRoot:  params.RemoteRoot,
 		Background:  params.Background,
@@ -406,7 +401,7 @@ func (client *LocalClient) InitializeRemoteConnection(ctx context.Context, param
 func (client *LocalClient) InitializeDockerConnection(ctx context.Context, params ConnectParams) error {
 	initName := ResolveConnectionName(params.Name, params.OSName)
 
-	fmt.Fprintf(client.errWriter, "initializing %s\n", initName)
+	fmt.Fprintf(client.outWriter, "initializing %s\n", initName)
 
 	resp, err := client.InitializeContainerConnection(ctx, &graftv1.InitializeContainerConnectionRequest{
 		Name:            initName,
@@ -465,35 +460,30 @@ func (client *LocalClient) postInitConnection(
 }
 
 func (client *LocalClient) printConnectSummary(name, localRoot, remoteRoot string, synced bool) {
-	fmt.Fprintf(client.errWriter, "connected to %s\n", name)
+	fmt.Fprintf(client.outWriter, "connected to %s\n", name)
 
 	if localRoot != "" {
-		fmt.Fprintf(client.errWriter, "  local root:   %s\n", localRoot)
+		fmt.Fprintf(client.outWriter, "  local root:   %s\n", localRoot)
 
 		if remoteRoot != "" {
-			fmt.Fprintf(client.errWriter, "  remote root:  %s\n", remoteRoot)
+			fmt.Fprintf(client.outWriter, "  remote root:  %s\n", remoteRoot)
 		}
 
 		if synced {
-			fmt.Fprintf(client.errWriter, "  sync:         enabled\n")
+			fmt.Fprintf(client.outWriter, "  sync:         enabled\n")
 		}
 	} else {
-		fmt.Fprintf(client.errWriter, "\n")
-		fmt.Fprintf(client.errWriter, "  Run commands:    graft run --to %s <command>\n", name)
-		fmt.Fprintf(client.errWriter, "  Open a shell:    graft shell --to %s\n", name)
-		fmt.Fprintf(client.errWriter, "  Set local root:  graft connection set-root %s <local_dir> [remote_dir]\n", name)
+		fmt.Fprintf(client.outWriter, "\n")
+		fmt.Fprintf(client.outWriter, "  Run commands:    graft run --to %s <command>\n", name)
+		fmt.Fprintf(client.outWriter, "  Open a shell:    graft shell --to %s\n", name)
+		fmt.Fprintf(client.outWriter, "  Set local root:  graft connection set-root %s <local_dir> [remote_dir]\n", name)
 	}
 }
 
 // Sync sets up bidi file sync between the source directory and a connection.
 func (client *LocalClient) Sync(ctx context.Context, sourceDir, destDir, toConnName string) error {
 	if sourceDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return client.handleError(err)
-		}
-
-		sourceDir = cwd
+		sourceDir = client.cwd
 	}
 
 	if _, err := client.SyncFilesToConnection(ctx, &graftv1.SyncFilesToConnectionRequest{
@@ -515,6 +505,13 @@ func (client *LocalClient) SetConnectionRoots(ctx context.Context, connName, loc
 		RemoteRoot:     remoteRoot,
 	}); err != nil {
 		return client.handleError(err)
+	}
+
+	fmt.Fprintf(client.outWriter, "updated %s\n", connName)
+	fmt.Fprintf(client.outWriter, "  local root:   %s\n", localRoot)
+
+	if remoteRoot != "" {
+		fmt.Fprintf(client.outWriter, "  remote root:  %s\n", remoteRoot)
 	}
 
 	return nil
@@ -557,15 +554,10 @@ func (client *LocalClient) RunCommand(
 	arguments []string,
 	connectionName string,
 ) (int, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return 0, client.handleError(err)
-	}
-
 	return client.runCommand(ctx, RunCommandOptions{
 		ConnectionName: connectionName,
-		CallerPID:      uint64(os.Getppid()), //nolint:gosec // overflow okay
-		CWD:            cwd,
+		CallerPID:      client.ppid,
+		CWD:            client.cwd,
 		Command:        command,
 		Arguments:      arguments,
 		ExactCommand:   true,
@@ -595,19 +587,14 @@ func (client *LocalClient) RemoteShell(
 	ctx context.Context,
 	connectionName string,
 ) (int, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return 0, client.handleError(err)
-	}
-
-	callerPID := uint64(os.Getppid()) //nolint:gosec // overflow okay
+	callerPID := client.ppid
 	if sessPID, ok := client.sessionPID(); ok {
 		callerPID = sessPID
 	}
 
 	return client.runCommand(ctx, RunCommandOptions{
 		CallerPID:      callerPID,
-		CWD:            cwd,
+		CWD:            client.cwd,
 		MakeShell:      true,
 		ConnectionName: connectionName,
 	})
@@ -894,7 +881,7 @@ func (client *LocalClient) PrintPortForwards(ctx context.Context, connectionName
 			continue
 		}
 
-		fmt.Fprintf(client.errWriter, "%s:\n", name)
+		fmt.Fprintf(client.outWriter, "%s:\n", name)
 
 		for _, pf := range ports {
 			label := "auto"
@@ -903,7 +890,7 @@ func (client *LocalClient) PrintPortForwards(ctx context.Context, connectionName
 			}
 
 			if pf.GetConflict() {
-				fmt.Fprintf(client.errWriter, "  %s %s %d -> remote:%d [%s] %s\n",
+				fmt.Fprintf(client.outWriter, "  %s %s %d -> remote:%d [%s] %s\n",
 					color.RedString("CONFLICT"),
 					pf.GetProtocol(),
 					pf.GetLocalPort(),
@@ -912,7 +899,7 @@ func (client *LocalClient) PrintPortForwards(ctx context.Context, connectionName
 					pf.GetConflictReason(),
 				)
 			} else {
-				fmt.Fprintf(client.errWriter, "  %s localhost:%d -> remote:%d [%s]\n",
+				fmt.Fprintf(client.outWriter, "  %s localhost:%d -> remote:%d [%s]\n",
 					pf.GetProtocol(),
 					pf.GetLocalPort(),
 					pf.GetRemotePort(),
@@ -928,14 +915,14 @@ func (client *LocalClient) PrintPortForwards(ctx context.Context, connectionName
 // Which prints which connection a command is mapped to.
 func (client *LocalClient) Which(ctx context.Context, cmd string) error {
 	resp, err := client.SessionWhich(ctx, &graftv1.SessionWhichRequest{
-		Pid:     uint64(os.Getppid()), //nolint:gosec // overflow okay
+		Pid:     client.ppid,
 		Command: cmd,
 	})
 	if err != nil {
 		return client.handleError(err)
 	}
 
-	fmt.Fprintf(client.errWriter, "%s: %s\n", resp.GetConnectionName(), resp.GetRemotePath())
+	fmt.Fprintf(client.outWriter, "%s: %s\n", resp.GetConnectionName(), resp.GetRemotePath())
 
 	return nil
 }
@@ -944,7 +931,7 @@ func (client *LocalClient) Which(ctx context.Context, cmd string) error {
 func (client *LocalClient) PinConnection(ctx context.Context, connName string) error {
 	sessPID, ok := client.sessionPID()
 	if !ok {
-		sessPID = uint64(os.Getppid()) //nolint:gosec // overflow okay
+		sessPID = client.ppid
 	}
 
 	_, err := client.SessionPinConnection(ctx, &graftv1.SessionPinConnectionRequest{
@@ -964,14 +951,9 @@ func (client *LocalClient) SelectConnectionForCWD(ctx context.Context) (*graftv1
 }
 
 func (client *LocalClient) selectConnection(ctx context.Context) (*graftv1.SessionSelectConnectionResponse, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, errors.Wrap(err)
-	}
-
 	resp, err := client.SessionSelectConnection(ctx, &graftv1.SessionSelectConnectionRequest{
-		Pid: uint64(os.Getppid()), //nolint:gosec // overflow okay
-		Cwd: cwd,
+		Pid: client.ppid,
+		Cwd: client.cwd,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err)
@@ -988,17 +970,17 @@ func (client *LocalClient) SelectConnection(ctx context.Context) error {
 	}
 
 	// Very similar to status. Maybe better to reuse that proto
-	fmt.Fprintf(client.errWriter, "%s", selectResp.GetConnectionName())
+	fmt.Fprintf(client.outWriter, "%s", selectResp.GetConnectionName())
 
 	if len(selectResp.GetPathRemappings()) != 0 {
-		fmt.Fprint(client.errWriter, ":")
+		fmt.Fprint(client.outWriter, ":")
 	}
 
 	for _, remapping := range selectResp.GetPathRemappings() {
-		fmt.Fprintf(client.errWriter, "\nRemapping %s->%s", remapping.GetFromPrefix(), remapping.GetToPrefix())
+		fmt.Fprintf(client.outWriter, "\nRemapping %s->%s", remapping.GetFromPrefix(), remapping.GetToPrefix())
 	}
 
-	fmt.Fprintln(client.errWriter)
+	fmt.Fprintln(client.outWriter)
 
 	return nil
 }
@@ -1012,8 +994,8 @@ func (client *LocalClient) DumpLogs(ctx context.Context, connectionName string) 
 		return client.handleError(err)
 	}
 
-	fmt.Fprintf(client.errWriter, "STDOUT:\n %s\n\n", resp.GetStdout())
-	fmt.Fprintf(client.errWriter, "STDERR:\n %s\n\n", resp.GetStderr())
+	fmt.Fprintf(client.outWriter, "STDOUT:\n %s\n\n", resp.GetStdout())
+	fmt.Fprintf(client.outWriter, "STDERR:\n %s\n\n", resp.GetStderr())
 
 	return nil
 }

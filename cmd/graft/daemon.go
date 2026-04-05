@@ -404,7 +404,7 @@ func checkForUpdateInBackground(ctx context.Context, logger *slog.Logger) {
 	if result.UpdateAvailable {
 		logger.WarnContext(ctx, "a new version of graft is available",
 			"latest", result.LatestVersion, "current", result.CurrentVersion)
-	} else {
+	} else if !result.Skipped {
 		logger.DebugContext(ctx, "no update available",
 			"latest", result.LatestVersion, "current", result.CurrentVersion)
 	}

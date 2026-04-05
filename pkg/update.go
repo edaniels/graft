@@ -95,6 +95,7 @@ type ReleaseClient interface {
 
 // UpdateCheckResult is returned by CheckForUpdate.
 type UpdateCheckResult struct {
+	Skipped         bool
 	CurrentVersion  string
 	LatestVersion   string
 	UpdateAvailable bool
@@ -104,6 +105,9 @@ type UpdateCheckResult struct {
 
 // CheckForUpdate queries a ReleaseClient for a newer version.
 func CheckForUpdate(ctx context.Context, client ReleaseClient, currentVersion string) (*UpdateCheckResult, error) {
+	if currentVersion == versionUnknown {
+		return &UpdateCheckResult{Skipped: true}, nil
+	}
 	slog.DebugContext(ctx, "checking for update", "current_version", currentVersion)
 
 	latestVersion, err := client.LatestVersion(ctx)

@@ -203,7 +203,7 @@ func (eps *EnvProviderSet) discoverExtraSearchPaths(ctx context.Context, dir str
 			// No trackable config file (e.g. mise walking up parent dirs).
 			// Re-capture periodically instead of every tick.
 			if time.Since(existing.capturedAt) < refreshInterval {
-				return nil
+				return existing.pathDirs
 			}
 		}
 	}
@@ -214,8 +214,14 @@ func (eps *EnvProviderSet) discoverExtraSearchPaths(ctx context.Context, dir str
 // discoverAndCacheSearchPaths captures env for a directory and stores it in the cache.
 // Returns the captured env (nil if negative).
 func (eps *EnvProviderSet) discoverAndCacheSearchPaths(ctx context.Context, dir string) []string {
-	configPath, configMtime := eps.findConfigFile(dir)
-	env := eps.captureFromProviders(ctx, dir)
+	normalizedDir, err := filesystem.Normalize(dir)
+	if err != nil {
+		// best effort
+		normalizedDir = dir
+	}
+
+	configPath, configMtime := eps.findConfigFile(normalizedDir)
+	env := eps.captureFromProviders(ctx, normalizedDir)
 
 	if env == nil && configPath == "" {
 		eps.mu.Lock()

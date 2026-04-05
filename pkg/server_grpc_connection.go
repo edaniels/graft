@@ -438,6 +438,7 @@ func (srv *Server) DiscoverCommands(req *graftv1.DiscoverCommandsRequest, server
 		commands, commandsByDirectory := collectCommandsFromPATH(pathsFromEnvProviders)
 		if !slices.Equal(knownCommands, commands) || !reflect.DeepEqual(knownCommandsByDirectory, commandsByDirectory) {
 			knownCommands = commands
+			knownCommandsByDirectory = commandsByDirectory
 
 			resp := &graftv1.DiscoverCommandsResponse{
 				Commands: commands,

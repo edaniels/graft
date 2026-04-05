@@ -14,6 +14,7 @@ import (
 // forwardings eventually get created as files that are in this session's PATH, if the shimming
 // utility is installed into the shell.
 type Session struct {
+	pid              uint64
 	sessMu           sync.Mutex
 	desiredFwds      map[string][]ForwardCommandIntent
 	actualFwds       map[string]ForwardedCommand

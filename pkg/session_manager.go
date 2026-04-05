@@ -444,6 +444,7 @@ func (mgr *SessionManager) getOrCreateSession(sessionPID uint64) (*Session, erro
 	}
 
 	sess = &Session{
+		pid:         sessionPID,
 		desiredFwds: map[string][]ForwardCommandIntent{},
 		actualFwds:  map[string]ForwardedCommand{},
 		dir:         sessPath,
@@ -528,35 +529,37 @@ func (mgr *SessionManager) Which(
 // 2. Session-pinned connection (via `graft use`)
 // 3. CWD-based auto-selection.
 func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, connName string, cwd string) (*Connection, error) {
-	slog.DebugContext(ctx, "lookup connection by name", "name", connName)
+	logger := slog.Default().With("pid", sess.pid)
 
 	if connName != "" {
+		logger.Log(ctx, slogLevelNoisy, "lookup connection by name", "name", connName)
+
 		return mgr.connMgr.Connection(connName)
 	}
 
 	if sess != nil {
 		if pinned := sess.PinnedConnection(); pinned != "" {
-			slog.DebugContext(ctx, "lookup connection by session pin", "pinned", pinned)
+			logger.Log(ctx, slogLevelNoisy, "lookup connection by session pin", "pinned", pinned)
 
 			conn, err := mgr.connMgr.Connection(pinned)
 			if err == nil {
 				return conn, nil
 			}
 
-			slog.WarnContext(ctx, "pinned connection unavailable; falling through to CWD", "pinned", pinned, "error", err)
+			logger.WarnContext(ctx, "pinned connection unavailable; falling through to CWD", "pinned", pinned, "error", err)
 		}
 	}
 
-	slog.DebugContext(ctx, "lookup connection by cwd", "cwd", cwd)
-
 	if cwd != "" {
+		logger.Log(ctx, slogLevelNoisy, "lookup connection by cwd", "cwd", cwd)
+
 		selectedConn, haveConn := mgr.connMgr.connectionByCWD(ctx, cwd)
 		if haveConn {
 			return selectedConn, nil
 		}
 	}
 
-	return nil, errors.New("no connection to start a shell with by default")
+	return nil, errors.New("failed to find an eligible connection")
 }
 
 // resolveSessionConnection returns the connection for a session, applying the

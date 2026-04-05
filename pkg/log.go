@@ -15,6 +15,8 @@ import (
 	"github.com/edaniels/graft/errors"
 )
 
+var slogLevelNoisy = slog.LevelDebug - 1
+
 // NewLogger returns a logger that excludes logs less severe than the default, unless one is set by GRAFT_LOG_LEVEL.
 func NewLogger(defaultLevel slog.Level) *slog.Logger {
 	logger, _ := newLogger(defaultLevel)
@@ -23,19 +25,11 @@ func NewLogger(defaultLevel slog.Level) *slog.Logger {
 }
 
 func newLogger(defaultLevel slog.Level) (*slog.Logger, slog.Level) {
-	logLevel, ok := os.LookupEnv("GRAFT_LOG_LEVEL")
 	selectedLogLevel := defaultLevel
-
-	if ok {
-		switch strings.ToLower(logLevel) {
-		case "debug":
-			selectedLogLevel = slog.LevelDebug
-		case "info":
-			selectedLogLevel = slog.LevelInfo
-		case "warn":
-			selectedLogLevel = slog.LevelWarn
-		case logStringError:
-			selectedLogLevel = slog.LevelError
+	if logLevelStr, ok := os.LookupEnv("GRAFT_LOG_LEVEL"); ok {
+		var logLevel slog.Level
+		if err := logLevel.UnmarshalText([]byte(logLevelStr)); err == nil {
+			selectedLogLevel = logLevel
 		}
 	}
 
@@ -46,6 +40,13 @@ func newLogger(defaultLevel slog.Level) (*slog.Logger, slog.Level) {
 			slogor.SetLevel(selectedLogLevel),
 			slogor.SetTimeFormat(time.Stamp),
 			slogor.ShowSource(),
+			slogor.SetLevelStr(slogor.MapOfLevel{
+				slogLevelNoisy:  "NOISY",
+				slog.LevelDebug: slog.LevelDebug.Level().String(),
+				slog.LevelInfo:  slog.LevelInfo.Level().String() + " ",
+				slog.LevelWarn:  slog.LevelWarn.Level().String() + " ",
+				slog.LevelError: slog.LevelError.Level().String(),
+			}),
 		)
 	} else {
 		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{

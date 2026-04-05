@@ -569,14 +569,14 @@ func signersFromKeyFiles(logger *slog.Logger, paths []string) []ssh.Signer {
 	for _, f := range paths {
 		rd, err := os.ReadFile(f)
 		if err != nil {
-			logger.Debug("skipping identity file", "path", f, "error", err)
+			logger.Log(context.Background(), slogLevelNoisy, "skipping identity file", "path", f, "error", err)
 
 			continue
 		}
 
 		privKey, err := ssh.ParseRawPrivateKey(rd)
 		if err != nil {
-			logger.Debug("skipping identity file; failed to parse key", "path", f, "error", err)
+			logger.Log(context.Background(), slogLevelNoisy, "skipping identity file; failed to parse key", "path", f, "error", err)
 
 			continue
 		}

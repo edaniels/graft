@@ -697,6 +697,10 @@ func (client *LocalClient) runCommand(
 		stdoutIsTerminal = term.IsTerminal(int(f.Fd()))
 	}
 
+	// TODO(erd): we may want to offer an opt-out for this but it
+	// allows for `sudo graft run yum install htop` when not shimmed
+	opts.WithSudo = opts.WithSudo || os.Geteuid() == 0
+
 	// Only allocate a pty when both stdin and stdout are terminals.
 	// When output is piped, a pty causes spurious echo/padding artifacts.
 	allocatePty := stdinIsTerminal && stdoutIsTerminal

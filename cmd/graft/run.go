@@ -14,12 +14,12 @@ var (
 )
 
 var runCmd = &cobra.Command{
-	Use:                "run [-t <connection>] <command> [args...]",
+	Use:                "run [-t <connection>] [-m <pattern>] <command> [args...]",
 	Short:              "Run a command on a remote connection",
 	DisableFlagParsing: true,
 	ValidArgsFunction:  completeRunArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		to, cmdArgs, helpRequested, err := parseRunArgs(args)
+		ra, helpRequested, err := parseRunArgs(args)
 		if helpRequested {
 			return cmd.Help()
 		}
@@ -30,7 +30,12 @@ var runCmd = &cobra.Command{
 		client, ctx := newClient(cmd.Context(), false)
 		defer client.Close()
 
-		exitCode, err := client.RunCommand(ctx, cmdArgs[0], cmdArgs[1:], to)
+		var exitCode int
+		if ra.match != "" {
+			exitCode, err = client.RunCommandMultiTarget(ctx, ra.command[0], ra.command[1:], ra.match)
+		} else {
+			exitCode, err = client.RunCommand(ctx, ra.command[0], ra.command[1:], ra.to)
+		}
 		if err != nil {
 			return cliExit(err, 1)
 		}
@@ -56,8 +61,14 @@ func completeRunArgs(cmd *cobra.Command, args []string, toComplete string) ([]st
 	return nil, cobra.ShellCompDirectiveDefault
 }
 
-func parseRunArgs(args []string) (string, []string, bool, error) {
-	var to string
+type runArgs struct {
+	to      string
+	match   string
+	command []string
+}
+
+func parseRunArgs(args []string) (runArgs, bool, error) {
+	var ra runArgs
 
 	i := 0
 	for i < len(args) {
@@ -66,37 +77,59 @@ func parseRunArgs(args []string) (string, []string, bool, error) {
 		if arg == "--" {
 			rest := args[i+1:]
 			if len(rest) == 0 {
-				return "", nil, false, errors.Errorf("%w", errCommandRequired)
+				return runArgs{}, false, errors.Errorf("%w", errCommandRequired)
 			}
 
-			return to, rest, false, nil
+			ra.command = rest
+
+			return ra, false, nil
 		}
 
 		if arg == "--help" || arg == "-h" {
-			return "", nil, true, nil
+			return runArgs{}, true, nil
 		}
 
 		if arg == "--to" || arg == "-t" {
 			if i+1 >= len(args) {
-				return "", nil, false, errors.Errorf("flag %q %w", arg, errFlagRequiresVal)
+				return runArgs{}, false, errors.Errorf("flag %q %w", arg, errFlagRequiresVal)
 			}
 
-			to = args[i+1]
+			ra.to = args[i+1]
 			i += 2
 
 			continue
 		}
 
 		if strings.HasPrefix(arg, "--to=") {
-			to = arg[len("--to="):]
+			ra.to = arg[len("--to="):]
+			i++
+
+			continue
+		}
+
+		if arg == "--match" || arg == "-m" {
+			if i+1 >= len(args) {
+				return runArgs{}, false, errors.Errorf("flag %q %w", arg, errFlagRequiresVal)
+			}
+
+			ra.match = args[i+1]
+			i += 2
+
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--match=") {
+			ra.match = arg[len("--match="):]
 			i++
 
 			continue
 		}
 
 		// First non-flag argument starts the command.
-		return to, args[i:], false, nil
+		ra.command = args[i:]
+
+		return ra, false, nil
 	}
 
-	return "", nil, false, errors.Errorf("%w", errCommandRequired)
+	return runArgs{}, false, errors.Errorf("%w", errCommandRequired)
 }

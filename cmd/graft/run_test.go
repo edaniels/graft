@@ -11,6 +11,7 @@ func TestParseRunArgs(t *testing.T) {
 		name          string
 		args          []string
 		wantTo        string
+		wantMatch     string
 		wantCmdArgs   []string
 		wantHelp      bool
 		wantErrSubstr string
@@ -69,11 +70,40 @@ func TestParseRunArgs(t *testing.T) {
 			args:          []string{"-t"},
 			wantErrSubstr: "requires a value",
 		},
+		{
+			name:        "short match flag",
+			args:        []string{"-m", "prod-*", "uptime"},
+			wantMatch:   "prod-*",
+			wantCmdArgs: []string{"uptime"},
+		},
+		{
+			name:        "long match flag",
+			args:        []string{"--match", "web-?", "df", "-h"},
+			wantMatch:   "web-?",
+			wantCmdArgs: []string{"df", "-h"},
+		},
+		{
+			name:        "match flag with equals",
+			args:        []string{"--match=*", "hostname"},
+			wantMatch:   "*",
+			wantCmdArgs: []string{"hostname"},
+		},
+		{
+			name:          "missing match value",
+			args:          []string{"-m"},
+			wantErrSubstr: "requires a value",
+		},
+		{
+			name:        "match flag then double dash",
+			args:        []string{"-m", "prod-*", "--", "tail", "-f"},
+			wantMatch:   "prod-*",
+			wantCmdArgs: []string{"tail", "-f"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			to, cmdArgs, helpRequested, err := parseRunArgs(tt.args)
+			ra, helpRequested, err := parseRunArgs(tt.args)
 			if tt.wantErrSubstr != "" {
 				test.That(t, err, test.ShouldNotBeNil)
 				test.That(t, err.Error(), test.ShouldContainSubstring, tt.wantErrSubstr)
@@ -88,8 +118,9 @@ func TestParseRunArgs(t *testing.T) {
 				return
 			}
 
-			test.That(t, to, test.ShouldEqual, tt.wantTo)
-			test.That(t, cmdArgs, test.ShouldResemble, tt.wantCmdArgs)
+			test.That(t, ra.to, test.ShouldEqual, tt.wantTo)
+			test.That(t, ra.match, test.ShouldEqual, tt.wantMatch)
+			test.That(t, ra.command, test.ShouldResemble, tt.wantCmdArgs)
 		})
 	}
 }

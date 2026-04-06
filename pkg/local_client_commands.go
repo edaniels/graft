@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -582,6 +583,193 @@ func (client *LocalClient) RunCommand(
 		Arguments:      arguments,
 		ExactCommand:   true,
 	})
+}
+
+// RunCommandMultiTarget runs a command on all connections whose names match the given glob pattern.
+// Output from each connection is prefixed with [connection-name]. Stdin is broadcast to all.
+// Returns the highest exit code across all connections.
+func (client *LocalClient) RunCommandMultiTarget(
+	ctx context.Context,
+	command string,
+	arguments []string,
+	pattern string,
+) (int, error) {
+	resp, err := client.ListConnections(ctx, &graftv1.ListConnectionsRequest{})
+	if err != nil {
+		return 0, client.handleError(err)
+	}
+
+	var names []string
+
+	for name := range resp.GetConnections() {
+		matched, err := path.Match(pattern, name)
+		if err != nil {
+			return 0, errors.Errorf("invalid match pattern %q: %w", pattern, err)
+		}
+
+		if matched {
+			names = append(names, name)
+		}
+	}
+
+	slices.Sort(names)
+
+	if len(names) == 0 {
+		return 0, errors.Errorf("no connections matched pattern %q", pattern)
+	}
+
+	var (
+		writeMu      sync.Mutex
+		mu           sync.Mutex
+		maxExit      int
+		wg           sync.WaitGroup
+		stdinWriters = make([]*io.PipeWriter, 0, len(names))
+	)
+
+	for _, name := range names {
+		pr, pw := io.Pipe()
+		stdinWriters = append(stdinWriters, pw)
+
+		wg.Add(1)
+
+		go func(connName string, stdin io.Reader) {
+			defer wg.Done()
+
+			code, err := client.runCommandOnTarget(ctx, connName, command, arguments, stdin, &writeMu)
+			if err != nil {
+				writeMu.Lock()
+				fmt.Fprintf(client.errWriter, "[%s] error: %v\n", connName, err)
+				writeMu.Unlock()
+
+				code = 1
+			}
+
+			mu.Lock()
+
+			if code > maxExit {
+				maxExit = code
+			}
+
+			mu.Unlock()
+		}(name, pr)
+	}
+
+	go func() {
+		writers := make([]io.Writer, len(stdinWriters))
+		for i, pw := range stdinWriters {
+			writers[i] = pw
+		}
+
+		//nolint:errcheck
+		io.Copy(io.MultiWriter(writers...), os.Stdin)
+
+		for _, pw := range stdinWriters {
+			pw.Close()
+		}
+	}()
+
+	wg.Wait()
+
+	return maxExit, nil
+}
+
+func (client *LocalClient) runCommandOnTarget(
+	ctx context.Context,
+	connectionName, command string,
+	arguments []string,
+	stdin io.Reader,
+	writeMu *sync.Mutex,
+) (int, error) {
+	runClient, err := client.GraftServiceClient.RunCommand(ctx)
+	if err != nil {
+		return 0, client.handleError(err)
+	}
+
+	err = runClient.Send(&graftv1.RunCommandRequest{
+		Data: &graftv1.RunCommandRequest_Start{
+			Start: &graftv1.StartCommand{
+				ConnectionName: connectionName,
+				Command:        command,
+				Arguments:      arguments,
+				ExactCommand:   true,
+				Sudo:           os.Geteuid() == 0,
+				RedirectStdout: true,
+				RedirectStderr: true,
+			},
+		},
+	})
+	if err != nil {
+		return 0, errors.Wrap(err)
+	}
+
+	resp, err := runClient.Recv()
+	if err != nil {
+		return 0, errors.Wrap(err)
+	}
+
+	if _, ok := resp.GetData().(*graftv1.RunCommandResponse_Started); !ok {
+		return 0, errors.New("expected CommandStarted response from server")
+	}
+
+	runningCmd := NewRemoteRunningCommand(runClient)
+
+	prefix := []byte("[" + connectionName + "] ")
+	outW := &prefixWriter{prefix: prefix, w: client.outWriter, mu: writeMu}
+	errW := &prefixWriter{prefix: prefix, w: client.errWriter, mu: writeMu}
+
+	go func() {
+		defer runningCmd.Stdin().Close()
+
+		if _, err := io.Copy(runningCmd.Stdin(), stdin); err != nil {
+			slog.ErrorContext(ctx, "error copying stdin", "connection", connectionName, "error", err)
+		}
+	}()
+
+	var outputWg sync.WaitGroup
+
+	outputWg.Go(func() {
+		if _, err := io.Copy(outW, runningCmd.Stdout()); err != nil {
+			slog.ErrorContext(ctx, "error copying stdout", "connection", connectionName, "error", err)
+		}
+	})
+
+	outputWg.Go(func() {
+		if _, err := io.Copy(errW, runningCmd.Stderr()); err != nil {
+			slog.ErrorContext(ctx, "error copying stderr", "connection", connectionName, "error", err)
+		}
+	})
+
+	waitStatus, waitErr := runningCmd.Wait()
+	runningCmd.Stdin().Close()
+	outputWg.Wait()
+
+	if waitErr != nil {
+		return -1, errors.Wrap(waitErr)
+	}
+
+	return waitStatus, nil
+}
+
+type prefixWriter struct {
+	prefix []byte
+	w      io.Writer
+	mu     *sync.Mutex
+}
+
+func (pw *prefixWriter) Write(p []byte) (int, error) {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+
+	if _, err := pw.w.Write(pw.prefix); err != nil {
+		return 0, errors.Wrap(err)
+	}
+
+	n, err := pw.w.Write(p)
+	if err != nil {
+		return n, errors.Wrap(err)
+	}
+
+	return n, nil
 }
 
 // RunShimmedCommand runs a command caught by the shimming shell interface.

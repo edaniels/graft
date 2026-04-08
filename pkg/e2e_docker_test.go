@@ -145,6 +145,9 @@ func TestConnectionManagerE2E(t *testing.T) {
 
 			t.Cleanup(func() {
 				test.That(t, mgr.Remove(context.Background(), connName), test.ShouldBeNil)
+				// Defensive fallback in case mgr.Remove didn't reach the container
+				// (applies to Docker; harmless no-op for SSH-named connections).
+				forceRemoveDockerContainerByName(t, connName)
 			})
 
 			state, _ := conn.State()
@@ -517,6 +520,11 @@ type e2eConnectorVariant struct {
 func (env *e2eDockerEnv) newDockerVariant(t *testing.T) e2eConnectorVariant {
 	t.Helper()
 
+	// The default containerName equals the image tag and is static across runs.
+	// Force-remove any stale container so a prior run's leaked state can't
+	// poison this one.
+	forceRemoveDockerContainerByName(t, env.imageID)
+
 	factory := env.dockerConnectorFactory(t)
 	destURL := env.dockerDestURL(t)
 
@@ -529,7 +537,28 @@ func (env *e2eDockerEnv) newDockerVariant(t *testing.T) e2eConnectorVariant {
 		connector: connector,
 		cleanup: func() {
 			test.That(t, connector.DeinitializeRemote(context.Background()), test.ShouldBeNil)
+			// Belt and suspenders: forcibly remove by name in case Deinitialize
+			// no-oped because containerID wasn't tracked for some reason.
+			forceRemoveDockerContainerByName(t, env.imageID)
 		},
+	}
+}
+
+// forceRemoveDockerContainerByName does a best-effort removal of a docker
+// container by name, swallowing "not found" errors. Helps keep test runs
+// hermetic against state leaked from prior runs.
+func forceRemoveDockerContainerByName(t *testing.T, name string) {
+	t.Helper()
+
+	if name == "" {
+		return
+	}
+
+	rmCmd := exec.Command("docker", "rm", "-f", name) //nolint:noctx
+
+	out, err := rmCmd.CombinedOutput()
+	if err != nil && !strings.Contains(string(out), "No such container") {
+		t.Logf("forceRemoveDockerContainerByName(%q): %v: %s", name, err, string(out))
 	}
 }
 
@@ -724,6 +753,8 @@ func TestConnectionReconnectE2E(t *testing.T) {
 
 			t.Cleanup(func() {
 				test.That(t, mgr.Remove(context.Background(), connName), test.ShouldBeNil)
+				// Defensive fallback in case mgr.Remove didn't reach the container.
+				forceRemoveDockerContainerByName(t, connName)
 			})
 
 			state, _ := conn.State()

@@ -10,6 +10,9 @@ import (
 )
 
 var (
+	// forwardTo is the persistent --to/-t flag shared by `forward` and all
+	// `forward <subcommand>` commands. PersistentFlags on the parent makes
+	// it inherited and settable in any position on the command line.
 	forwardTo     string
 	forwardPrefix bool
 )
@@ -75,8 +78,6 @@ Port spec format: [local_port:]remote_port[/protocol]
 	},
 }
 
-var forwardListTo string
-
 var forwardListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List forwarded commands and ports",
@@ -84,7 +85,7 @@ var forwardListCmd = &cobra.Command{
 		client, ctx := newClient(cmd.Context(), true)
 		defer client.Close()
 
-		toConn := forwardListTo
+		toConn := forwardTo
 		if toConn == "" {
 			if selectResp, err := client.SelectConnectionForCWD(ctx); err == nil {
 				toConn = selectResp.GetConnectionName()
@@ -99,8 +100,6 @@ var forwardListCmd = &cobra.Command{
 	},
 }
 
-var forwardRemoveTo string
-
 var forwardRemoveCmd = &cobra.Command{
 	Use:   "remove [flags] <command|port> [commands|ports...]",
 	Short: "Remove forwarded commands or ports from a connection",
@@ -109,7 +108,7 @@ var forwardRemoveCmd = &cobra.Command{
 		client, ctx := newClient(cmd.Context(), true)
 		defer client.Close()
 
-		toConn := forwardRemoveTo
+		toConn := forwardTo
 		if toConn == "" {
 			selectResp, err := client.SelectConnectionForCWD(ctx)
 			if err != nil {
@@ -160,15 +159,11 @@ var forwardWhichCmd = &cobra.Command{
 }
 
 func init() {
-	forwardCmd.Flags().StringVarP(&forwardTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
+	// PersistentFlags so --to/-t is inherited by all forward subcommands and
+	// can be set in any position on the command line.
+	forwardCmd.PersistentFlags().StringVarP(&forwardTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
 	forwardCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 	forwardCmd.Flags().BoolVar(&forwardPrefix, "prefix", false, "Forward with connection name prefix")
-
-	forwardListCmd.Flags().StringVarP(&forwardListTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
-	forwardListCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
-
-	forwardRemoveCmd.Flags().StringVarP(&forwardRemoveTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
-	forwardRemoveCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 
 	forwardCmd.AddCommand(forwardListCmd)
 	forwardCmd.AddCommand(forwardRemoveCmd)

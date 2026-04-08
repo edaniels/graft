@@ -1,0 +1,13 @@
+version: v1
+forward:
+  - make
+  - bazel
+  - 8080
+  - 5432:5432/tcp
+destinations:
+  build:
+    host: build-box
+    user: ec2-user
+    syncTo: ~/work
+    sync: true
+    prefix: false

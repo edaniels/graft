@@ -357,7 +357,7 @@ func (srv *Server) InitializeContainerConnection(
 
 	destURL.Scheme = dockerSchemeName
 	query := destURL.Query()
-	query.Add("name", name)
+	query.Add("containerName", name)
 	query.Add("imageTag", req.GetImageTag())
 	destURL.RawQuery = query.Encode()
 

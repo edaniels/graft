@@ -72,7 +72,9 @@ var connectionCommandsCmd = &cobra.Command{
 }
 
 func init() {
-	connectionCmd.Flags().StringVarP(&connCmdShellTo, "to", "t", "", "Target connection")
+	// PersistentFlags so the flag is inherited by all subcommands and can be
+	// set anywhere on the command line (before or after the subcommand name).
+	connectionCmd.PersistentFlags().StringVarP(&connCmdShellTo, "to", "t", "", "Target connection")
 	connectionCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 
 	connectionCmd.AddCommand(connectionSetRootCmd)

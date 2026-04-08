@@ -1,0 +1,13 @@
+{
+  "name": "graft",
+  "version": "0.1.0",
+  "description": "Use graft to run commands, sync files, forward ports, and manage remote SSH/Docker connections from Claude Code. Triggers on graft env vars, graft.yaml files, or graft mentions.",
+  "author": {
+    "name": "Eric Daniels",
+    "url": "https://github.com/edaniels"
+  },
+  "homepage": "https://graft.run",
+  "repository": "https://github.com/edaniels/graft",
+  "license": "Apache-2.0",
+  "keywords": ["graft", "remote", "ssh", "docker", "sync", "port-forward"]
+}

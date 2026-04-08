@@ -88,6 +88,17 @@ graft forward go make          # forward commands to the remote
 
 All of these commands detect the connection from your current directory. You can also specify a connection explicitly with `--to <connection>`, or pin a connection to your shell session with `graft use <connection>`.
 
+## Use with Claude Code
+
+If you use [Claude Code](https://claude.com/claude-code), install the graft plugin so Claude knows how to use graft for remote development. It covers running commands, syncing files, forwarding ports, and diagnosing connection issues:
+
+```
+/plugin marketplace add edaniels/graft
+/plugin install graft@graft
+```
+
+The plugin auto-triggers when you're working in a graft-managed directory, so you can keep using Claude Code normally; it will reach for `graft run`, `graft sync`, and `graft status` instead of raw `ssh`/`scp` where appropriate.
+
 ## Commands
 
 | Command      | Description                                                          |

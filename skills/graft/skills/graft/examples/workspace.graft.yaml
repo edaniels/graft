@@ -1,0 +1,4 @@
+version: v1
+workspace: true
+defaults:
+  syncWorkspace: true

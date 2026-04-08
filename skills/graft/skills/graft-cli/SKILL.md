@@ -1,5 +1,5 @@
 ---
-name: graft
+name: graft-cli
 description: This skill should be used when working in a directory managed by graft (a local-first remote development tool that makes remote files and commands feel local). Use it when the user mentions "graft", "remote machine", "build server", "sync to remote", "forward port", when GRAFT_SESSION or GRAFT_CONNECTION environment variables are set, or when a graft.yaml file is present in or above the working directory. Covers running commands on remote connections, syncing files, forwarding ports, setting up new connections (with flags or graft.yaml), reading graft status, and diagnosing issues with graft doctor.
 ---
 

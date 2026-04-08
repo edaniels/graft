@@ -8,11 +8,7 @@
     {
       "name": "graft",
       "description": "Teach Claude Code to use graft for remote development: run commands, sync files, forward ports, and manage SSH/Docker connections.",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/edaniels/graft",
-        "path": "skills/graft"
-      }
+      "source": "./plugins/graft"
     }
   ]
 }

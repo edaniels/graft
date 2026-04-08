@@ -274,15 +274,16 @@ func (conn *dockerConnector) InitializeRemote(initCtx context.Context) (bool, er
 	slog.DebugContext(initCtx, "created container", "container_id", createResp.ID, "response", createResp)
 	containerID = createResp.ID
 
+	// Record the containerID immediately so DeinitializeRemote can clean it up
+	// if a subsequent step (e.g. ContainerStart) fails.
+	conn.mu.Lock()
+	conn.containerID = containerID
+	conn.destURL.Host = containerID
+	conn.mu.Unlock()
+
 	if _, err := conn.dockerClient.ContainerStart(initCtx, containerID, client.ContainerStartOptions{}); err != nil {
 		return false, errors.Wrap(err)
 	}
-
-	conn.mu.Lock()
-	conn.containerID = containerID
-	// See racy destURL.Host comment above in the containerID != "" branch.
-	conn.destURL.Host = containerID
-	conn.mu.Unlock()
 
 	return false, nil
 }
@@ -652,20 +653,32 @@ func (conn *dockerConnector) StateFields() []any {
 }
 
 // DeinitializeRemote closes the connection and removes the underlying container.
+// Removes by containerID if known, otherwise falls back to removing by
+// containerName so partially initialized containers aren't leaked.
 func (conn *dockerConnector) DeinitializeRemote(ctx context.Context) error {
 	conn.mu.Lock()
 	containerID := conn.containerID
 	conn.containerID = ""
+	containerName := conn.containerName
 	conn.mu.Unlock()
 
-	if containerID == "" {
+	target := containerID
+	if target == "" {
+		target = containerName
+	}
+
+	if target == "" {
 		return nil
 	}
 
-	if _, err := conn.dockerClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
+	if _, err := conn.dockerClient.ContainerRemove(ctx, target, client.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	}); err != nil {
+		if strings.Contains(err.Error(), "No such container") {
+			return nil
+		}
+
 		return errors.WrapPrefix(err, "error removing container")
 	}
 

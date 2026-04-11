@@ -3,7 +3,6 @@ package graft
 import (
 	"context"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -199,7 +198,7 @@ func (srv *Server) Run(runCtx context.Context) error {
 		})
 	}
 
-	listener, err := net.Listen("unix", srv.sockPath) //nolint:noctx
+	listener, err := listenUnixSocket(srv.sockPath)
 	if err != nil {
 		// TODO(erd): Listen failure may leave restore goroutine blocked indefinitely.
 		return errors.Wrap(err)

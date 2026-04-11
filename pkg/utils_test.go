@@ -1,9 +1,14 @@
 package graft
 
 import (
+	"context"
+	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.viam.com/test"
 )
 
 // testEnv holds environment variable settings for a test case.
@@ -404,4 +409,55 @@ func TestSessionPath(t *testing.T) {
 	if path != want {
 		t.Errorf("got %q, want %q", path, want)
 	}
+}
+
+func TestListenUnixSocket(t *testing.T) {
+	// t.TempDir() produces paths too long for sockaddr_un on macOS, so use /tmp directly.
+	newSocketDir := func(t *testing.T) string {
+		t.Helper()
+
+		dir, err := os.MkdirTemp("/tmp", "lus-") //nolint:usetesting
+		test.That(t, err, test.ShouldBeNil)
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+		return dir
+	}
+
+	t.Run("restricts the socket to mode 0600", func(t *testing.T) {
+		path := filepath.Join(newSocketDir(t), "test.sock")
+
+		listener, err := listenUnixSocket(path)
+		test.That(t, err, test.ShouldBeNil)
+		t.Cleanup(func() {
+			if listener != nil {
+				_ = listener.Close()
+			}
+		})
+
+		info, err := os.Stat(path)
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, info.Mode()&os.ModeSocket, test.ShouldNotEqual, os.FileMode(0))
+		test.That(t, info.Mode().Perm(), test.ShouldEqual, os.FileMode(0o600))
+	})
+
+	t.Run("accepts connections from the owning process", func(t *testing.T) {
+		path := filepath.Join(newSocketDir(t), "test.sock")
+
+		listener, err := listenUnixSocket(path)
+		test.That(t, err, test.ShouldBeNil)
+		t.Cleanup(func() { _ = listener.Close() })
+
+		var dialer net.Dialer
+
+		conn, err := dialer.DialContext(context.Background(), "unix", path)
+		test.That(t, err, test.ShouldBeNil)
+
+		_ = conn.Close()
+	})
+
+	t.Run("returns an error when the parent directory is missing", func(t *testing.T) {
+		listener, err := listenUnixSocket(filepath.Join(newSocketDir(t), "missing", "test.sock"))
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, listener, test.ShouldBeNil)
+	})
 }

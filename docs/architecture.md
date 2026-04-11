@@ -281,6 +281,39 @@ sequenceDiagram
 
 If a local port is already in use, the forward is marked as a conflict and reported in `graft status`.
 
+## Security model
+
+### Local and remote daemon sockets
+
+The local daemon listens on a Unix socket at `~/.local/state/graft/local/graftd.sock` (see `Server.Run` in `pkg/server.go`). A client that can `connect(2)` to that socket can run arbitrary commands on any configured remote, open new connections, and read session state. Two POSIX checks have to pass for a connection to succeed:
+
+1. **Directory traversal.** The state directory tree under `~/.local/state/graft/` is created by `os.MkdirAll(sockDir, DirPerms)` during server construction in `pkg/server.go`, using `DirPerms = 0o750` from `pkg/utils.go`. Users outside the owning group cannot walk into the tree to reach the socket at all.
+2. **Socket write permission.** The socket file is created by the `listenUnixSocket` helper in `pkg/utils.go`, which calls `net.Listen("unix", path)` and then chmods the result to `FilePerms = 0o600`. Both Linux and macOS enforce the write bit on `connect(2)` on a Unix socket, so only the socket's owning user can dial it.
+
+With those two checks in place, only the user who started the daemon can reach it. Graft does not sandbox or authenticate individual clients beyond that, however, so any process running under that user (a shell, a language SDK, a compromised package) has the same level of access the user does.
+
+The remote daemon (`graft daemon --as-remote`) reuses the same startup path, so the same permission story applies to its socket at `~/.local/state/graft/remote/graftd.sock` on the remote machine. The SSH agent forwarding bridge in `pkg/server_grpc_connection.go` creates a short-lived socket under `/tmp` and goes through the same `listenUnixSocket` helper, so the world-accessible `/tmp` parent directory does not weaken the restriction; the socket file itself is still owner-only.
+
+### Direction of RPCs
+
+Every gRPC method (`RunCommand`, `WatchPorts`, `ForwardPort`, `SyncFilesToConnectionProtocol`, and the rest, defined in `proto/graft/v1/graft.proto`) is initiated by the local daemon and serviced by the remote daemon. Local is always the client; remote is always the server. There is no reverse connection, and the remote machine has no endpoint to reach on the local machine outside the SSH session that the local daemon itself opened.
+
+This direction matters when reasoning about a compromised remote. If the remote account is taken over, the attacker cannot initiate arbitrary actions against the local daemon. What they can do is return malicious data in response to RPCs the local daemon has already made:
+
+- A `WatchPorts` server stream can report ports that are not actually listening, which causes the local daemon to open local listeners and relay accepted traffic to an attacker-chosen target on the remote.
+- `ForwardPort`, `RunCommand`, and other streaming responses carry payloads that reach the local daemon's parsing and handling code; a bug there is reachable from the remote.
+- `SyncFilesToConnectionProtocol` tunnels mutagen's sync protocol, so compromise of that stream is equivalent to compromise of the mutagen peer on the local side, with the same ability to write files within the configured sync roots.
+
+The blast radius is bounded by what the local daemon does with remote responses. A compromised remote cannot run arbitrary commands on the local machine.
+
+### File synchronization
+
+Files moved by `graft sync` are written by mutagen under the remote user's account and inherit that user's filesystem permissions. Graft does not attempt to preserve or translate ownership across machines, and it does not run as root on either end.
+
+### Authentication
+
+Graft does no authentication of its own. It relies on operating-system permissions at each end of a connection, and on SSH (or Docker) for the channel between them.
+
 ## Key directories
 
 | Path | Purpose |

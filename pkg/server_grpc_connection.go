@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -694,7 +693,7 @@ func (srv *Server) ForwardSSHAgent(server graftv1.GraftService_ForwardSSHAgentSe
 
 	slog.DebugContext(server.Context(), "local ssh agent uds sock", "path", sockFile.Name())
 
-	listener, err := net.Listen("unix", sockFile.Name()) //nolint:noctx
+	listener, err := listenUnixSocket(sockFile.Name())
 	if err != nil {
 		// TODO(erd): Listen failure may leave restore goroutine blocked indefinitely.
 		return errors.Wrap(err)

@@ -37,6 +37,26 @@ const (
 	graftDirName = "graft"
 )
 
+// listenUnixSocket creates a unix domain socket listener at path and chmods
+// it to FilePerms (0o600). Linux and macOS both enforce the write bit on
+// connect(2), so this restricts the socket to its owning user even when the
+// parent directory allows traversal or the process umask is unusually
+// permissive.
+func listenUnixSocket(path string) (net.Listener, error) {
+	listener, err := net.Listen("unix", path) //nolint:noctx
+	if err != nil {
+		return nil, errors.Wrap(err)
+	}
+
+	if err := os.Chmod(path, FilePerms); err != nil {
+		_ = listener.Close()
+
+		return nil, errors.Wrap(err)
+	}
+
+	return listener, nil
+}
+
 // hasPathPrefix checks whether path has the given prefix on a directory boundary.
 // It returns the remaining suffix and true if the prefix matches.
 // For example, hasPathPrefix("/home/user/proj", "/home/user") returns ("/proj", true)

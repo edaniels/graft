@@ -98,7 +98,7 @@ func startDockerDarwin(ctx context.Context, dockerClient *client.Client) error {
 			return errors.Wrap(context.Cause(ctx))
 		}
 
-		output, err := exec.CommandContext(ctx, "open", "-j", "-a", "Docker").CombinedOutput()
+		output, err := exec.CommandContext(ctx, "open", "-j", "-g", "-a", "Docker").CombinedOutput()
 		if err != nil {
 			return errors.Wrap(err)
 		}

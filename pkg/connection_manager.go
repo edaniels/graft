@@ -76,9 +76,10 @@ func (mgr *ConnectionManager) getOrCreateDaemonForConnection(
 	scheme ConnectorFactory,
 ) (*remoteDaemon, *Connection, error) {
 	mgr.connMgrMu.Lock()
-	defer mgr.connMgrMu.Unlock()
 
 	if conn, ok := mgr.connections[name]; ok {
+		mgr.connMgrMu.Unlock()
+
 		if conn.daemon.Destination() != destURL.String() {
 			return nil, nil, errors.WrapSuffix(
 				errConflictingDestinationSameName,
@@ -89,6 +90,8 @@ func (mgr *ConnectionManager) getOrCreateDaemonForConnection(
 
 		return conn.daemon, conn, nil
 	}
+
+	mgr.connMgrMu.Unlock()
 
 	daemon, err := mgr.getOrCreateDaemon(ctx, destURL, identity, scheme, mgr.logLevel)
 	if err != nil {
@@ -200,7 +203,7 @@ func (mgr *ConnectionManager) followSupersede(from, to *remoteDaemon) {
 }
 
 // getOrCreateDaemon returns a shared remoteDaemon for the given host+identity,
-// creating one if it doesn't exist. Must be called under connMgrMu.
+// creating one if it doesn't exist.
 func (mgr *ConnectionManager) getOrCreateDaemon(
 	ctx context.Context,
 	destURL *url.URL,
@@ -208,13 +211,19 @@ func (mgr *ConnectionManager) getOrCreateDaemon(
 	scheme ConnectorFactory,
 	logLevel slog.Level,
 ) (*remoteDaemon, error) {
+	mgr.connMgrMu.Lock()
+
 	key := daemonKey(destURL, identity)
 
 	if d, ok := mgr.daemons[key]; ok {
 		d.refCount++
 
+		mgr.connMgrMu.Unlock()
+
 		return d, nil
 	}
+
+	mgr.connMgrMu.Unlock()
 
 	connector, err := scheme.CreateConnector(ctx, destURL, identity)
 	if err != nil {
@@ -225,7 +234,23 @@ func (mgr *ConnectionManager) getOrCreateDaemon(
 	d.runCtx = mgr.runCtx
 	d.mapKey = key
 	d.refCount = 1
+
+	mgr.connMgrMu.Lock()
+
+	if existing, ok := mgr.daemons[key]; ok {
+		existing.refCount++
+
+		mgr.connMgrMu.Unlock()
+
+		if err := d.Close(); err != nil {
+			slog.ErrorContext(ctx, "unlikely: error closing duplicate daemon", "error", err)
+		}
+
+		return existing, nil
+	}
+
 	mgr.daemons[key] = d
+	mgr.connMgrMu.Unlock()
 
 	return d, nil
 }

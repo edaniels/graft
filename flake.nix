@@ -19,9 +19,13 @@
         pname = "graft";
         inherit version;
         src = ./.;
-        vendorHash = "sha256-dxEgYsDC0R6yBiIswsnsHhGxyUlPCuAP8PTiBKZtnQE=";
+        vendorHash = "sha256-RWDQ0+caE+KVwasOFO1uF81Sfs7QC0fb6sEfa5acMFs=";
         goSum = ./go.sum;
-        env.CGO_ENABLED = "0";
+        # darwin needs cgo for mutagen's FSEvents watcher.
+        env.CGO_ENABLED =
+          if pkgs.stdenv.hostPlatform.isDarwin
+          then "1"
+          else "0";
 
         nativeBuildInputs = [pkgs.just pkgs.zstd];
 

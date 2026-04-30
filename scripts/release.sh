@@ -49,6 +49,12 @@ if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; the
     err "Invalid version format: $VERSION (expected semver like 0.1.0 or 0.1.0-beta.1)"
 fi
 
+# The darwin-arm64 release binary needs CGO=1 so mutagen's FSEvents watcher
+# compiles in (otherwise file syncs poll every 10s).
+if [ "$(uname -s)" != "Darwin" ]; then
+    err "Releases must be built on macOS"
+fi
+
 # Check for required tools
 command -v gh >/dev/null 2>&1 || err "gh CLI is required but not installed"
 command -v just >/dev/null 2>&1 || err "just is required but not installed"

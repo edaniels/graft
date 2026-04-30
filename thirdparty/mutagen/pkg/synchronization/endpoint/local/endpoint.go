@@ -503,6 +503,19 @@ func NewEndpoint(
 		watchPollingInterval = version.DefaultWatchPollingInterval()
 	}
 
+	switch actualWatchMode {
+	case reifiedWatchModeRecursive:
+		endpoint.logger.Debugf("watcher: native recursive (re-establish poll %ds)", watchPollingInterval)
+	case reifiedWatchModePoll:
+		if nonRecursiveWatchingAllowed && watching.NonRecursiveWatchingSupported {
+			endpoint.logger.Debugf("watcher: poll (interval %ds, with native non-recursive accel)", watchPollingInterval)
+		} else {
+			endpoint.logger.Debugf("watcher: poll (interval %ds, no native watching)", watchPollingInterval)
+		}
+	case reifiedWatchModeDisabled:
+		endpoint.logger.Debug("watcher: disabled")
+	}
+
 	// Start the watching Goroutine.
 	go func() {
 		if actualWatchMode == reifiedWatchModePoll {

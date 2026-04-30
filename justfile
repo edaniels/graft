@@ -16,18 +16,18 @@ _LD_BUILD_VERSION := if BUILD_VERSION != "" { " -X github.com/edaniels/graft/pkg
 [private]
 _LD_BUILD_UPDATE_URL := if BUILD_UPDATE_URL != "" { " -X github.com/edaniels/graft/pkg.defaultUpdateURL=" + BUILD_UPDATE_URL } else { "" }
 LD_FLAGS := '-ldflags "-w -s' + _LD_BUILD_VERSION + _LD_BUILD_UPDATE_URL + '"'
-GO_ENV_FLAGS := "CGO_ENABLED=0 GOBIN=$HOME/go/bin"
+GO_ENV_FLAGS := "GOBIN=$HOME/go/bin"
 GO_BUILD_FLAGS := '-trimpath ' + if env('RACE', 'false') == "true" { "-race" } else { "" }
 PLATFORMS := "linux-amd64 linux-arm64 darwin-arm64"
 LINT_GOOS_LIST := "linux darwin"
 
 # Build a single platform binary (no embedding)
 build-graft os arch:
-    {{ GO_ENV_FLAGS }} GOOS={{ os }} GOARCH={{ arch }} go build {{ GO_BUILD_FLAGS }} {{ LD_FLAGS }} -o {{ BIN_DIR }}/{{ DAEMON_NAME }}-{{ os }}-{{ arch }} {{ GRAFT_PKG }}
+    CGO_ENABLED={{ if os == "darwin" { "1" } else { "0" } }} {{ GO_ENV_FLAGS }} GOOS={{ os }} GOARCH={{ arch }} go build {{ GO_BUILD_FLAGS }} {{ LD_FLAGS }} -o {{ BIN_DIR }}/{{ DAEMON_NAME }}-{{ os }}-{{ arch }} {{ GRAFT_PKG }}
 
 # Build a single platform binary with embedded binaries (requires prepare-embedded first)
 build-graft-embedded os arch:
-    {{ GO_ENV_FLAGS }} GOOS={{ os }} GOARCH={{ arch }} go build {{ GO_BUILD_FLAGS }} -tags embed_binaries {{ LD_FLAGS }} -o {{ BIN_DIR }}/{{ DAEMON_NAME }}-{{ os }}-{{ arch }} {{ GRAFT_PKG }}
+    CGO_ENABLED={{ if os == "darwin" { "1" } else { "0" } }} {{ GO_ENV_FLAGS }} GOOS={{ os }} GOARCH={{ arch }} go build {{ GO_BUILD_FLAGS }} -tags embed_binaries {{ LD_FLAGS }} -o {{ BIN_DIR }}/{{ DAEMON_NAME }}-{{ os }}-{{ arch }} {{ GRAFT_PKG }}
 
 # Build and install graft for current host with embedded binaries for remote deployment
 graft: prepare-embedded
@@ -39,8 +39,18 @@ graft: prepare-embedded
 graft-dev:
     {{ GO_ENV_FLAGS }} go install {{ GO_BUILD_FLAGS }} {{ GRAFT_PKG }}
 
-# Build all deployment target binaries and compress for embedding
-prepare-embedded: build-all
+# Build all deployment target binaries and compress for embedding.
+[linux]
+prepare-embedded:
+    just --justfile {{ justfile() }} build-graft linux amd64
+    just --justfile {{ justfile() }} build-graft linux arm64
+    just --justfile {{ justfile() }} compress-binaries
+
+[macos]
+prepare-embedded:
+    just --justfile {{ justfile() }} build-graft linux amd64
+    just --justfile {{ justfile() }} build-graft linux arm64
+    just --justfile {{ justfile() }} build-graft darwin arm64
     just --justfile {{ justfile() }} compress-binaries
 
 # Compress binaries for embedding (requires binaries to exist in bin/)
@@ -124,8 +134,16 @@ ci-lint:
         exit 1; \
     fi
 
+[linux]
 ci-build:
-    just build-all
+    just build-graft linux amd64
+    just build-graft linux arm64
+
+[macos]
+ci-build:
+    just build-graft linux amd64
+    just build-graft linux arm64
+    just build-graft darwin arm64
 
 update-deps:
     go get -u ./...

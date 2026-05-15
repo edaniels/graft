@@ -26,18 +26,16 @@ set -e
 export PATH=$_GC_LOCAL_PATH
 if [ "$#" -lt 1 ]; then
 	exec $(basename $0) $@
-	return
-fi
-if [ "$#" -lt 2 ]; then
-	args=""
-else
-	args="$(printf " %q" "${@:2}")"
 fi
 
-shim_exists=0
 cmd=$(basename $1)
-PATH=$_GC_SHIMS_PATH type -P $cmd </dev/null &>/dev/null || shim_exists=$?
-if [ -n "$_GC_SHIMS_PATH" ] && [ "$shim_exists" -eq 0 ]; then
+if [ -n "$_GC_SHIMS_PATH" ] && [ -x "$_GC_SHIMS_PATH/$cmd" ]; then
+	shift
+	if [ "$#" -lt 1 ]; then
+		args=""
+	else
+		args="$(printf " %q" "$@")"
+	fi
 	graft run-shimmed-cmd --pid=$GRAFT_SESSION --cwd=$(pwd) --sudo --cmd=$cmd -- $args
 else
 	exec $(basename $0) $@

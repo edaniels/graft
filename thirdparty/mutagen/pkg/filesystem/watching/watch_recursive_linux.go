@@ -16,7 +16,9 @@ var RecursiveWatchingSupported = true
 func NewRecursiveWatcher(target string) (RecursiveWatcher, error) {
 	slog.Debug("making recursive watcher", "target", target)
 	notifyChan := make(chan notify.EventInfo, 1)
-	if err := notify.Watch(target, notifyChan, notify.All); err != nil {
+	// The "/..." suffix is required by rjeczalik/notify to watch subdirectories recursively on Linux;
+	// without it inotify only reports events on the immediate children of target.
+	if err := notify.Watch(target+"/...", notifyChan, notify.All); err != nil {
 		return nil, err
 	}
 

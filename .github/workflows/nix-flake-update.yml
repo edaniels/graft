@@ -26,6 +26,10 @@ jobs:
         if: steps.build.outcome == 'failure' && github.event_name == 'push'
         run: determinate-nixd fix hashes --auto-apply
 
+      - name: Verify build
+        if: steps.build.outcome == 'failure'
+        run: nix build
+
       - name: Open PR with hash fix
         if: steps.build.outcome == 'failure' && github.event_name == 'push'
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
@@ -37,7 +41,3 @@ jobs:
           branch: nix/update-vendor-hash
           sign-commits: true
           delete-branch: true
-
-      - name: Verify build
-        if: steps.build.outcome == 'failure'
-        run: nix build

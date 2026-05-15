@@ -330,6 +330,13 @@ func (mgr *ConnectionManager) Connection(name string) (*Connection, error) {
 	return mgr.connection(name, true)
 }
 
+// LookupConnection returns an existing connection regardless of its current state.
+// Use this when you want to inspect or reconcile state on a connection that may
+// be Initializing, Failed, or Reconnecting.
+func (mgr *ConnectionManager) LookupConnection(name string) (*Connection, error) {
+	return mgr.connection(name, false)
+}
+
 // initialize sets up a new connection with a daemon running at the given destination.
 // The connection is created immediately so it appears in Connections() during initialization,
 // then the daemon is initialized. On failure the connection is cleaned up or left in Failed
@@ -419,9 +426,14 @@ func (mgr *ConnectionManager) initialize(
 			delete(mgr.connections, name)
 			mgr.releaseDaemon(daemon)
 			mgr.connMgrMu.Unlock()
+
+			return nil, errors.WrapPrefix(initErr, "error initializing connection")
 		}
 
-		return nil, errors.WrapPrefix(initErr, "error initializing connection")
+		// Restore path (destroyIfFail=false): keep the connection alive so the
+		// caller can register desired state (e.g. sync intents) for later
+		// reconciliation once the daemon eventually reconnects.
+		return conn, errors.WrapPrefix(initErr, "error initializing connection")
 	}
 
 	return conn, nil

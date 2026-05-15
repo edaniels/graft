@@ -126,14 +126,17 @@ func TestConnectionManagerFailedInitRestoreLeavesConnection(t *testing.T) {
 	destURL, err := url.Parse("ssh://host")
 	test.That(t, err, test.ShouldBeNil)
 
-	// Restore (destroyIfFail=false) should fail but leave connection in map.
-	_, restoreErr := mgr.Restore(t.Context(), "myconn", destURL, "/local", "/remote", "", false)
+	// Restore (destroyIfFail=false) should fail but leave connection in map and
+	// return the conn so callers can register desired state for later reconciliation.
+	restoredConn, restoreErr := mgr.Restore(t.Context(), "myconn", destURL, "/local", "/remote", "", false)
 	test.That(t, restoreErr, test.ShouldNotBeNil)
+	test.That(t, restoredConn, test.ShouldNotBeNil)
 
 	conns := mgr.Connections()
 	test.That(t, len(conns), test.ShouldEqual, 1)
 	conn := conns["myconn"]
 	test.That(t, conn, test.ShouldNotBeNil)
+	test.That(t, restoredConn, test.ShouldEqual, conn)
 	state, _ := conn.State()
 	test.That(t, state, test.ShouldEqual, ConnectionStateFailed)
 }

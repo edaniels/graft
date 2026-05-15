@@ -196,6 +196,9 @@ func (srv *Server) Run(runCtx context.Context) error {
 				}
 			}
 		})
+		srv.activeWorkers.Go(func() {
+			srv.reconcileLoop(runCtx)
+		})
 	}
 
 	listener, err := listenUnixSocket(srv.sockPath)
@@ -299,6 +302,195 @@ func (srv *Server) restore(runCtx context.Context) error {
 	}
 
 	return errors.Join(allErrs...)
+}
+
+// reconcileInterval is how often the server reconciles desired connection state
+// (from config) against the live state on each connection.
+const reconcileInterval = time.Second
+
+// reconcileLoop periodically re-establishes per-connection state (sync intents,
+// forward commands, port forwards) that's declared in the config but not active
+// on a Connected connection. This makes restoration resilient to: (a) initial
+// Restore failing because the network isn't ready yet at user-login, and
+// (b) the daemon reconnecting after a transport drop.
+func (srv *Server) reconcileLoop(runCtx context.Context) {
+	ticker := time.NewTicker(reconcileInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		srv.reconcileConnections(runCtx)
+	}
+}
+
+// reconcileConnections walks the configured connections and ensures each one's
+// desired state is applied to its connection (when Connected). Errors are
+// logged and the next tick will retry.
+func (srv *Server) reconcileConnections(ctx context.Context) {
+	srv.serverMu.Lock()
+	pending := make([]ConnectionConfig, 0, len(srv.rootConfig.Connections))
+
+	for _, connConfig := range srv.rootConfig.Connections {
+		pending = append(pending, cloneConnectionConfig(connConfig))
+	}
+
+	srv.serverMu.Unlock()
+
+	for _, conf := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+
+		conn, err := srv.connMgr.LookupConnection(conf.Name)
+		if err != nil {
+			continue
+		}
+
+		state, _ := conn.State()
+		if state != ConnectionStateConnected {
+			continue
+		}
+
+		srv.applyConnectionSpec(ctx, conn, conf)
+	}
+}
+
+// applyConnectionSpec ensures the live state of conn matches the desired state
+// expressed by conf. New connection-level features (env vars, watches, etc.)
+// should add a step here rather than wiring themselves into both the startup
+// restore path and the reconcile loop. Each step must itself be idempotent.
+//
+// Callers are responsible for ensuring conn is in a state where remote calls
+// are safe (typically ConnectionStateConnected).
+func (srv *Server) applyConnectionSpec(ctx context.Context, conn *Connection, conf ConnectionConfig) {
+	srv.reconcileForwardCommands(ctx, conn, conf)
+	srv.reconcileSyncs(ctx, conn, conf)
+	srv.reconcilePortForwards(ctx, conn, conf)
+}
+
+// cloneConnectionConfig returns a copy of conf safe to use after dropping the
+// server lock. ConnectionConfig contains slices of value-type elements, so a
+// per-slice Clone is a sufficient deep copy.
+func cloneConnectionConfig(conf ConnectionConfig) ConnectionConfig {
+	conf.Forward = slices.Clone(conf.Forward)
+	conf.PrefixForward = slices.Clone(conf.PrefixForward)
+	conf.Synchronizations = slices.Clone(conf.Synchronizations)
+	conf.Ports = slices.Clone(conf.Ports)
+
+	return conf
+}
+
+func (srv *Server) reconcileSyncs(ctx context.Context, conn *Connection, conf ConnectionConfig) {
+	for _, intent := range computeMissingSyncs(conf.Synchronizations, conn.Synchronizations()) {
+		if err := srv.connMgr.EstablishSynchronization(
+			ctx, conf.Name, intent, srv.synchronizationManager, srv.syncProtoNum,
+		); err != nil {
+			slog.WarnContext(ctx, "reconcile: error establishing synchronization",
+				"name", conf.Name, "from", intent.FromLocal, "to", intent.ToRemote, "error", err)
+
+			continue
+		}
+
+		slog.InfoContext(ctx, "reconcile: established synchronization",
+			"name", conf.Name, "from", intent.FromLocal, "to", intent.ToRemote)
+	}
+}
+
+func (srv *Server) reconcileForwardCommands(ctx context.Context, conn *Connection, conf ConnectionConfig) {
+	desired := make([]ForwardCommandIntent, 0, len(conf.Forward)+len(conf.PrefixForward))
+	for _, name := range conf.Forward {
+		desired = append(desired, ForwardCommandIntent{Name: name, Prefix: false})
+	}
+
+	for _, name := range conf.PrefixForward {
+		desired = append(desired, ForwardCommandIntent{Name: name, Prefix: true})
+	}
+
+	missing := computeMissingForwardCommands(desired, conn.ForwardIntents())
+	if len(missing) == 0 {
+		return
+	}
+
+	conn.UpdateForwardCommands(missing)
+	slog.InfoContext(ctx, "reconcile: added forward commands", "name", conf.Name, "count", len(missing))
+}
+
+func (srv *Server) reconcilePortForwards(ctx context.Context, conn *Connection, conf ConnectionConfig) {
+	if len(conf.Ports) == 0 {
+		return
+	}
+
+	daemon := conn.lockedDaemon()
+
+	for _, portSpec := range conf.Ports {
+		parsed, parseErr := ParsePortSpec(portSpec)
+		if parseErr != nil {
+			continue
+		}
+
+		// AddExplicitPortForward is idempotent (no-op when the spec is already
+		// recorded as explicit), so it's safe to call every tick.
+		if err := daemon.AddExplicitPortForward(ctx, parsed); err != nil {
+			slog.WarnContext(ctx, "reconcile: error establishing port forward",
+				"name", conf.Name, "spec", portSpec, "error", err)
+		}
+	}
+}
+
+// computeMissingSyncs returns the desired sync intents that are not already
+// represented in active by an exact (FromLocal, ToRemote) match.
+func computeMissingSyncs(desired []SynchronizationIntentConfig, active []SynchronizationIntent) []SynchronizationIntent {
+	if len(desired) == 0 {
+		return nil
+	}
+
+	activeByLocal := make(map[string]string, len(active))
+	for _, a := range active {
+		activeByLocal[a.FromLocal] = a.ToRemote
+	}
+
+	missing := make([]SynchronizationIntent, 0, len(desired))
+
+	for _, d := range desired {
+		intent := SynchronizationIntentFromConfig(d)
+		if existing, ok := activeByLocal[intent.FromLocal]; ok && existing == intent.ToRemote {
+			continue
+		}
+
+		missing = append(missing, intent)
+	}
+
+	return missing
+}
+
+// computeMissingForwardCommands returns the desired forward intents not already
+// present in active (matched by exact (Name, Prefix) equality).
+func computeMissingForwardCommands(desired, active []ForwardCommandIntent) []ForwardCommandIntent {
+	if len(desired) == 0 {
+		return nil
+	}
+
+	activeSet := make(map[ForwardCommandIntent]struct{}, len(active))
+	for _, a := range active {
+		activeSet[a] = struct{}{}
+	}
+
+	missing := make([]ForwardCommandIntent, 0, len(desired))
+
+	for _, d := range desired {
+		if _, ok := activeSet[d]; ok {
+			continue
+		}
+
+		missing = append(missing, d)
+	}
+
+	return missing
 }
 
 func (srv *Server) restorePortForwards(ctx context.Context, conf ConnectionConfig) {

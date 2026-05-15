@@ -392,7 +392,10 @@ func (conn *Connection) Synchronizations() []SynchronizationIntent {
 	return syncs
 }
 
-// EstablishSynchronization sets up bidi file sync.
+// EstablishSynchronization sets up bidi file sync. Idempotent: if a sync with the
+// exact same (FromLocal, ToRemote) intent is already active, it is a no-op. If a
+// sync exists for the same FromLocal but with a different destination, an error is
+// returned.
 func (conn *Connection) EstablishSynchronization(
 	ctx context.Context,
 	syncIntent SynchronizationIntent,
@@ -401,6 +404,12 @@ func (conn *Connection) EstablishSynchronization(
 ) error {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
+
+	// Fast path: when reconciling from config (which stores already-resolved paths),
+	// the intent matches an active sync exactly. Skip without doing any remote I/O.
+	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok && existing.destination == syncIntent.ToRemote {
+		return nil
+	}
 
 	var ignores []string
 
@@ -422,6 +431,19 @@ func (conn *Connection) EstablishSynchronization(
 	}
 
 	syncIntent.ToRemote = strings.TrimSpace(strings.TrimSuffix(resolvedPath, "\n"))
+
+	// Re-check after resolution: an unresolved intent (e.g., "~/foo") may now match
+	// an already-active resolved entry.
+	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
+		if existing.destination == syncIntent.ToRemote {
+			return nil
+		}
+
+		return errors.Errorf(
+			"synchronization for %q already exists with destination %q (cannot override to %q)",
+			syncIntent.FromLocal, existing.destination, syncIntent.ToRemote,
+		)
+	}
 
 	_, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, "mkdir -p "+syncIntent.ToRemote)
 	if mkdirErr != nil {

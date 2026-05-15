@@ -132,6 +132,32 @@ func TestSetRoots(t *testing.T) {
 	})
 }
 
+func TestEstablishSynchronizationIdempotent(t *testing.T) {
+	t.Run("skip when exact intent already active", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+		conn.synchronizations["/local/sub"] = activeSync{destination: "/remote/sub"}
+
+		intent := SynchronizationIntent{FromLocal: "/local/sub", ToRemote: "/remote/sub"}
+
+		// Passing nil syncManager: if the fast-path skip works, we never dereference it.
+		err := conn.EstablishSynchronization(t.Context(), intent, nil, 1)
+		test.That(t, err, test.ShouldBeNil)
+		// The active sync is unchanged.
+		test.That(t, conn.synchronizations["/local/sub"].destination, test.ShouldEqual, "/remote/sub")
+	})
+
+	t.Run("rejects when same FromLocal but different destination", func(t *testing.T) {
+		conn := newTestConnectionWithRoots("/local", "/remote")
+		conn.synchronizations["/local/sub"] = activeSync{destination: "/remote/sub"}
+
+		intent := SynchronizationIntent{FromLocal: "/local/sub", ToRemote: "/remote/different"}
+
+		err := conn.EstablishSynchronization(t.Context(), intent, nil, 1)
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "already exists")
+	})
+}
+
 func TestRemoveForwardCommands(t *testing.T) {
 	t.Run("removes matching commands", func(t *testing.T) {
 		conn := newTestConnectionWithRoots("/local", "/remote")

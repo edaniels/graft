@@ -19,7 +19,7 @@
         pname = "graft";
         inherit version;
         src = ./.;
-        vendorHash = "sha256-RWDQ0+caE+KVwasOFO1uF81Sfs7QC0fb6sEfa5acMFs=";
+        vendorHash = "sha256-eFH5FzF+zFiopjFIVV75KNRJVk8bHYGsmpB8fOn8QhE=";
         goSum = ./go.sum;
         # darwin needs cgo for mutagen's FSEvents watcher.
         env.CGO_ENABLED =

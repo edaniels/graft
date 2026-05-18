@@ -206,7 +206,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, including our [AI usage p
 
 All build/test/lint commands use [`just`](https://github.com/casey/just):
 
-```bash
+```justfile
 just graft-dev    # build and install for local dev
 just test         # run tests
 just lint         # run all linters

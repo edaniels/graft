@@ -400,7 +400,6 @@ func (conn *Connection) EstablishSynchronization(
 	ctx context.Context,
 	syncIntent SynchronizationIntent,
 	syncManager *synchronization.Manager,
-	syncProtoNum int,
 ) error {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
@@ -455,39 +454,66 @@ func (conn *Connection) EstablishSynchronization(
 		return errors.New("connection is not available")
 	}
 
-	sessionID, err := syncManager.Create(
-		ContextWithConnRemoteClientConn(ctx, cc),
-		&urlpkg.URL{
-			Protocol: urlpkg.Protocol_Local,
-			Path:     syncIntent.FromLocal,
-		},
-		&urlpkg.URL{
-			Protocol: urlpkg.Protocol(syncProtoNum), //nolint:gosec // overflow okay
-			Host:     conn.Name(),
-			Path:     syncIntent.ToRemote,
-		},
-		&synchronization.Configuration{
-			SynchronizationMode: core.SynchronizationMode_SynchronizationModeTwoWayResolved,
-			IgnoreSyntax:        ignore.Syntax_SyntaxMutagen,
-			IgnoreVCSMode:       ignore.IgnoreVCSMode_IgnoreVCSModeIgnore,
-			Ignores:             ignores,
-		},
-		&synchronization.Configuration{},
-		&synchronization.Configuration{},
-		filepath.Base(syncIntent.ToRemote),
-		nil,
-		false,
-		"huh????",
-	)
-	if err != nil {
-		return errors.Wrap(err)
+	sessionName := syncSessionName(conn.Name(), syncIntent)
+
+	// Resume a paused session if one matches this intent. Keeping the ancestor
+	// archive across restarts is what stops locally-deleted files from
+	// coming back on the next sync.
+	existingID, existingPaused, lookupErr := findExistingSessionByName(ctx, syncManager, sessionName)
+	if lookupErr != nil {
+		return errors.WrapPrefix(lookupErr, "error looking up existing sync session")
+	}
+
+	var sessionID string
+	if existingID != "" {
+		sessionID = existingID
+
+		if existingPaused {
+			if resumeErr := syncManager.Resume(
+				ContextWithConnRemoteClientConn(ctx, cc),
+				&selection.Selection{Specifications: []string{existingID}},
+				"",
+			); resumeErr != nil {
+				return errors.WrapPrefix(resumeErr, "error resuming existing sync")
+			}
+		}
+	} else {
+		sessionID, err = syncManager.Create(
+			ContextWithConnRemoteClientConn(ctx, cc),
+			&urlpkg.URL{
+				Protocol: urlpkg.Protocol_Local,
+				Path:     syncIntent.FromLocal,
+			},
+			&urlpkg.URL{
+				Protocol: urlpkg.Protocol(syncProtoNum),
+				Host:     conn.Name(),
+				Path:     syncIntent.ToRemote,
+			},
+			&synchronization.Configuration{
+				SynchronizationMode: core.SynchronizationMode_SynchronizationModeTwoWayResolved,
+				IgnoreSyntax:        ignore.Syntax_SyntaxMutagen,
+				IgnoreVCSMode:       ignore.IgnoreVCSMode_IgnoreVCSModeIgnore,
+				Ignores:             ignores,
+			},
+			&synchronization.Configuration{},
+			&synchronization.Configuration{},
+			sessionName,
+			nil,
+			false,
+			"huh????",
+		)
+		if err != nil {
+			return errors.Wrap(err)
+		}
 	}
 
 	conn.synchronizations[syncIntent.FromLocal] = activeSync{
 		syncIntent.ToRemote,
 		func() {
-			if err := syncManager.Terminate(context.Background(), &selection.Selection{Specifications: []string{sessionID}}, ""); err != nil {
-				slog.ErrorContext(ctx, "error terminating sync", "session_id", sessionID, "error", err)
+			// Pause, not Terminate: keep the ancestor archive on disk.
+			// Termination only happens in the orphan reaper.
+			if err := syncManager.Pause(context.Background(), &selection.Selection{Specifications: []string{sessionID}}, ""); err != nil {
+				slog.ErrorContext(ctx, "error pausing sync", "session_id", sessionID, "error", err)
 			}
 		},
 	}

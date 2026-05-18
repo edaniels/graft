@@ -311,6 +311,14 @@ func TestForRemotePaths(t *testing.T) {
 		"XDG_CONFIG_HOME": "", "XDG_STATE_HOME": "",
 	}
 
+	// Remote-path helpers ignore local env vars (they don't reach the remote
+	// daemon), so every case below should resolve identically.
+	const (
+		wantSocket = "/home/remoteuser/.local/state/graft/remote/graftd.sock"
+		wantConfig = "/home/remoteuser/.config/graft/remote/config.yml"
+		wantLogs   = "/home/remoteuser/.local/state/graft/remote/logs"
+	)
+
 	tests := []struct {
 		name string
 		env  testEnv
@@ -320,26 +328,26 @@ func TestForRemotePaths(t *testing.T) {
 		{
 			"socket default", clearEnv,
 			func(h string) (string, error) { return DaemonSocketPathForRemote(h, "") },
-			"/home/remoteuser/.local/state/graft/remote/graftd.sock",
+			wantSocket,
 		},
 		{
 			"socket xdg",
 			testEnv{"XDG_STATE_HOME": "/xdg/state"},
 			func(h string) (string, error) { return DaemonSocketPathForRemote(h, "") },
-			"/xdg/state/graft/remote/graftd.sock",
+			wantSocket,
 		},
 		{
 			"socket graft",
 			testEnv{"GRAFT_STATE_HOME": "/graft/state"},
 			func(h string) (string, error) { return DaemonSocketPathForRemote(h, "") },
-			"/graft/state/remote/graftd.sock",
+			wantSocket,
 		},
-		{"config default", clearEnv, RootConfigPathForRemote, "/home/remoteuser/.config/graft/remote/config.yml"},
-		{"config xdg", testEnv{"XDG_CONFIG_HOME": "/xdg/config"}, RootConfigPathForRemote, "/xdg/config/graft/remote/config.yml"},
-		{"config graft", testEnv{"GRAFT_CONFIG_HOME": "/graft/config"}, RootConfigPathForRemote, "/graft/config/remote/config.yml"},
-		{"logs default", clearEnv, DaemonLogsPathForRemote, "/home/remoteuser/.local/state/graft/remote/logs"},
-		{"logs xdg", testEnv{"XDG_STATE_HOME": "/xdg/state"}, DaemonLogsPathForRemote, "/xdg/state/graft/remote/logs"},
-		{"logs graft", testEnv{"GRAFT_STATE_HOME": "/graft/state"}, DaemonLogsPathForRemote, "/graft/state/remote/logs"},
+		{"config default", clearEnv, RootConfigPathForRemote, wantConfig},
+		{"config xdg", testEnv{"XDG_CONFIG_HOME": "/xdg/config"}, RootConfigPathForRemote, wantConfig},
+		{"config graft", testEnv{"GRAFT_CONFIG_HOME": "/graft/config"}, RootConfigPathForRemote, wantConfig},
+		{"logs default", clearEnv, DaemonLogsPathForRemote, wantLogs},
+		{"logs xdg", testEnv{"XDG_STATE_HOME": "/xdg/state"}, DaemonLogsPathForRemote, wantLogs},
+		{"logs graft", testEnv{"GRAFT_STATE_HOME": "/graft/state"}, DaemonLogsPathForRemote, wantLogs},
 	}
 
 	for _, tt := range tests {

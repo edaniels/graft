@@ -140,7 +140,7 @@ func TestEstablishSynchronizationIdempotent(t *testing.T) {
 		intent := SynchronizationIntent{FromLocal: "/local/sub", ToRemote: "/remote/sub"}
 
 		// Passing nil syncManager: if the fast-path skip works, we never dereference it.
-		err := conn.EstablishSynchronization(t.Context(), intent, nil, 1)
+		err := conn.EstablishSynchronization(t.Context(), intent, nil)
 		test.That(t, err, test.ShouldBeNil)
 		// The active sync is unchanged.
 		test.That(t, conn.synchronizations["/local/sub"].destination, test.ShouldEqual, "/remote/sub")
@@ -152,7 +152,7 @@ func TestEstablishSynchronizationIdempotent(t *testing.T) {
 
 		intent := SynchronizationIntent{FromLocal: "/local/sub", ToRemote: "/remote/different"}
 
-		err := conn.EstablishSynchronization(t.Context(), intent, nil, 1)
+		err := conn.EstablishSynchronization(t.Context(), intent, nil)
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "already exists")
 	})

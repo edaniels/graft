@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mutagen-io/mutagen/pkg/logging"
+	"github.com/mutagen-io/mutagen/pkg/selection"
 	"github.com/mutagen-io/mutagen/pkg/synchronization"
 	urlpkg "github.com/mutagen-io/mutagen/pkg/url"
 	"google.golang.org/grpc"
@@ -41,7 +42,6 @@ type Server struct {
 	pidPath                string
 	envProviders           *EnvProviderSet
 	activeWorkers          sync.WaitGroup
-	syncProtoNum           int
 	serverMu               sync.Mutex
 	oobListenersMu         sync.Mutex
 	closed                 bool
@@ -51,6 +51,7 @@ type Server struct {
 	identity        string
 	sshAuthSockPath string
 	startedAt       time.Time
+	lastOrphanReap  time.Time
 }
 
 // NewServer returns a new daemon capable of serving any server role. All configuration is specified
@@ -92,14 +93,42 @@ func NewServer(
 		return nil, errors.WrapSuffix(errUnknownServerRole, role.String())
 	}
 
-	synchronizationManager, err := synchronization.NewManagerWithoutPersistence(logging.NewLoggerOnSlogger(slog.Default()))
+	// Setup socket for client/server communication. It's also kind of a process lock.
+	// For remote daemons with an identity, namespace the socket path.
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, errors.Wrap(err)
 	}
 
-	// Setup socket for client/server communication. It's also kind of a process lock.
-	// For remote daemons with an identity, namespace the socket path.
-	homeDir, err := os.UserHomeDir()
+	// Use a graft-namespaced mutagen data dir. On local, NewManager reloads
+	// paused sessions from here so ancestor archives survive daemon restarts.
+	// On remote, mutagen's endpoint writes its cache and staging here;
+	// identity scoping keeps multiple remote daemons on one machine from
+	// colliding.
+	syncStateDir, syncDirErr := graftSyncDir(homeDir, role, identity)
+	if syncDirErr != nil {
+		return nil, syncDirErr
+	}
+
+	if mkErr := os.MkdirAll(syncStateDir, DirPerms); mkErr != nil {
+		return nil, errors.Wrap(mkErr)
+	}
+
+	if setErr := os.Setenv("MUTAGEN_DATA_DIRECTORY", syncStateDir); setErr != nil {
+		return nil, errors.Wrap(setErr)
+	}
+
+	// Remote daemons don't own sync sessions, so the non-persistent manager
+	// is fine. They still need MUTAGEN_DATA_DIRECTORY set above for the
+	// remote endpoint's cache and staging.
+	var synchronizationManager *synchronization.Manager
+
+	if role == ServerRoleLocal {
+		synchronizationManager, err = synchronization.NewManager(logging.NewLoggerOnSlogger(slog.Default()))
+	} else {
+		synchronizationManager, err = synchronization.NewManagerWithoutPersistence(logging.NewLoggerOnSlogger(slog.Default()))
+	}
+
 	if err != nil {
 		return nil, errors.Wrap(err)
 	}
@@ -148,8 +177,6 @@ func NewServer(
 		sockPath:       sockPath,
 		pidPath:        pidPath,
 
-		// Mutagen stuff
-		syncProtoNum:           int(nextSyncProtoNum.Add(1)),
 		synchronizationManager: synchronizationManager,
 
 		oobListeners:   map[*oobListener]struct{}{},
@@ -157,7 +184,7 @@ func NewServer(
 
 		startedAt: time.Now(),
 	}
-	synchronization.ProtocolHandlers[urlpkg.Protocol(server.syncProtoNum)] = &mutagenSyncProtocolHandler{ //nolint:gosec // overflow okay
+	synchronization.ProtocolHandlers[urlpkg.Protocol(syncProtoNum)] = &mutagenSyncProtocolHandler{
 		server: server,
 	}
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(server.OOBUnaryServerInterceptor))
@@ -277,7 +304,6 @@ func (srv *Server) restore(runCtx context.Context) error {
 					conf.Name,
 					SynchronizationIntentFromConfig(syncIntent),
 					srv.synchronizationManager,
-					srv.syncProtoNum,
 				)
 				if err != nil {
 					slog.ErrorContext(runCtx, "error re-establishing synchronization for connection", "name", conf.Name, "error", err)
@@ -307,6 +333,11 @@ func (srv *Server) restore(runCtx context.Context) error {
 // reconcileInterval is how often the server reconciles desired connection state
 // (from config) against the live state on each connection.
 const reconcileInterval = time.Second
+
+// orphanReapInterval is how often we scan for sync sessions to terminate.
+// Slow because orphans only appear when a user removes an intent from config,
+// and each reap walks the full session list under a lock.
+const orphanReapInterval = 30 * time.Second
 
 // reconcileLoop periodically re-establishes per-connection state (sync intents,
 // forward commands, port forwards) that's declared in the config but not active
@@ -341,6 +372,8 @@ func (srv *Server) reconcileConnections(ctx context.Context) {
 
 	srv.serverMu.Unlock()
 
+	anyConnected := false
+
 	for _, conf := range pending {
 		if ctx.Err() != nil {
 			return
@@ -356,7 +389,17 @@ func (srv *Server) reconcileConnections(ctx context.Context) {
 			continue
 		}
 
+		anyConnected = true
+
 		srv.applyConnectionSpec(ctx, conn, conf)
+	}
+
+	// Reap orphan sync sessions. Gated on at least one Connected connection
+	// so we don't terminate everything during the startup window where no
+	// connection has come up yet.
+	if anyConnected && time.Since(srv.lastOrphanReap) >= orphanReapInterval {
+		srv.reapOrphanSyncs(ctx, pending)
+		srv.lastOrphanReap = time.Now()
 	}
 }
 
@@ -385,10 +428,57 @@ func cloneConnectionConfig(conf ConnectionConfig) ConnectionConfig {
 	return conf
 }
 
+// reapOrphanSyncs terminates graft-owned sync sessions whose name doesn't
+// match any intent in config. The only Terminate path; every other lifecycle
+// step (network drop, daemon restart, disconnect) pauses instead.
+func (srv *Server) reapOrphanSyncs(ctx context.Context, pending []ConnectionConfig) {
+	if srv.synchronizationManager == nil {
+		return
+	}
+
+	expected := make(map[string]bool)
+
+	for _, conf := range pending {
+		for _, s := range conf.Synchronizations {
+			expected[syncSessionName(conf.Name, SynchronizationIntentFromConfig(s))] = true
+		}
+	}
+
+	_, states, err := srv.synchronizationManager.List(ctx, &selection.Selection{All: true}, 0)
+	if err != nil {
+		slog.WarnContext(ctx, "reconcile: error listing sync sessions for orphan reap", "error", err)
+
+		return
+	}
+
+	for _, state := range states {
+		name := state.GetSession().GetName()
+		if !isGraftSyncName(name) {
+			continue
+		}
+
+		if expected[name] {
+			continue
+		}
+
+		id := state.GetSession().GetIdentifier()
+		if err := srv.synchronizationManager.Terminate(
+			ctx, &selection.Selection{Specifications: []string{id}}, "",
+		); err != nil {
+			slog.WarnContext(ctx, "reconcile: error terminating orphan sync",
+				"session_id", id, "name", name, "error", err)
+
+			continue
+		}
+
+		slog.InfoContext(ctx, "reconcile: terminated orphan sync", "session_id", id, "name", name)
+	}
+}
+
 func (srv *Server) reconcileSyncs(ctx context.Context, conn *Connection, conf ConnectionConfig) {
 	for _, intent := range computeMissingSyncs(conf.Synchronizations, conn.Synchronizations()) {
 		if err := srv.connMgr.EstablishSynchronization(
-			ctx, conf.Name, intent, srv.synchronizationManager, srv.syncProtoNum,
+			ctx, conf.Name, intent, srv.synchronizationManager,
 		); err != nil {
 			slog.WarnContext(ctx, "reconcile: error establishing synchronization",
 				"name", conf.Name, "from", intent.FromLocal, "to", intent.ToRemote, "error", err)
@@ -668,14 +758,17 @@ func (srv *Server) Close() {
 
 	srv.serverMu.Unlock()
 
+	// Close connections before Shutdown. Shutdown halts the controllers,
+	// after which Pause fails with "controller disabled" and never flips the
+	// paused flag the next startup needs.
+	if srv.connMgr != nil {
+		srv.connMgr.Close()
+	}
+
 	srv.synchronizationManager.Shutdown()
 
 	if srv.sessMgr != nil {
 		srv.sessMgr.Close()
-	}
-
-	if srv.connMgr != nil {
-		srv.connMgr.Close()
 	}
 
 	srv.grpcSrv.Stop()

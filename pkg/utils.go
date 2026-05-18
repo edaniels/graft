@@ -144,6 +144,8 @@ func graftConfigHome(homeDir string) string {
 
 // graftStateHome returns the state directory for Graft (~/.local/state/graft).
 // Checks GRAFT_STATE_HOME first, then XDG_STATE_HOME/graft, then ~/.local/state/graft.
+// Only valid for local paths; for remote-host paths use graftStateHomeRemote.
+// The env vars consulted here don't transit through SSH.
 func graftStateHome(homeDir string) string {
 	if val := os.Getenv("GRAFT_STATE_HOME"); val != "" {
 		return val
@@ -154,6 +156,19 @@ func graftStateHome(homeDir string) string {
 	}
 
 	return filepath.Join(homeDir, ".local", "state", graftDirName)
+}
+
+// graftStateHomeRemote returns the state directory for Graft on a remote host.
+// Doesn't consult local env vars; those don't transit through SSH/docker, so
+// the remote daemon always falls back to ~/.local/state/graft on its own
+// filesystem and the local side has to match.
+func graftStateHomeRemote(remoteHomeDir string) string {
+	return filepath.Join(remoteHomeDir, ".local", "state", graftDirName)
+}
+
+// graftConfigHomeRemote is the config-dir counterpart to graftStateHomeRemote.
+func graftConfigHomeRemote(remoteHomeDir string) string {
+	return filepath.Join(remoteHomeDir, ".config", graftDirName)
 }
 
 // graftCacheHome returns the cache directory for Graft (~/.cache/graft).
@@ -197,6 +212,26 @@ func DaemonCacheDir() (string, error) {
 	return filepath.Join(graftCacheHome(homeDir), "binaries"), nil
 }
 
+// graftSyncDir returns the mutagen state directory for a daemon with the given
+// role and identity. Mirrors daemonSocketPath's layout so two remote daemons
+// sharing a host (different identities) get isolated session/cache/staging
+// dirs instead of colliding under ~/.mutagen.
+func graftSyncDir(homeDir string, role ServerRole, identity string) (string, error) {
+	roleDir, err := roleSubdir(role)
+	if err != nil {
+		return "", err
+	}
+
+	parts := []string{graftStateHome(homeDir), roleDir}
+	if identity != "" {
+		parts = append(parts, identity)
+	}
+
+	parts = append(parts, "sync")
+
+	return filepath.Join(parts...), nil
+}
+
 func daemonSocketPath(stateHome string, role ServerRole, identity string) (string, error) {
 	roleDir, err := roleSubdir(role)
 	if err != nil {
@@ -224,8 +259,10 @@ func DaemonSocketPathForCurrentHost(role ServerRole) (string, error) {
 // DaemonSocketPathForRemote returns the expected graft daemon socket path for a remote user.
 // Socket is stored in the state directory: ~/.local/state/graft/remote/graftd.sock.
 // If identity is provided, the socket is namespaced under that identity.
+//
+// Ignores local env vars; see graftStateHomeRemote.
 func DaemonSocketPathForRemote(homeDir, identity string) (string, error) {
-	return daemonSocketPath(graftStateHome(homeDir), ServerRoleRemote, identity)
+	return daemonSocketPath(graftStateHomeRemote(homeDir), ServerRoleRemote, identity)
 }
 
 func rootConfigPath(configHome string, role ServerRole) (string, error) {
@@ -249,9 +286,9 @@ func RootConfigPathForCurrentHost(role ServerRole) (string, error) {
 }
 
 // RootConfigPathForRemote returns the expected graft config path for a remote user.
-// Uses GRAFT_CONFIG_HOME or XDG_CONFIG_HOME, falling back to ~/.config/graft/remote/config.yml.
+// Ignores local env vars; see graftStateHomeRemote.
 func RootConfigPathForRemote(homeDir string) (string, error) {
-	return rootConfigPath(graftConfigHome(homeDir), ServerRoleRemote)
+	return rootConfigPath(graftConfigHomeRemote(homeDir), ServerRoleRemote)
 }
 
 func daemonLogsPath(stateHome string, role ServerRole) (string, error) {
@@ -275,9 +312,9 @@ func DaemonLogsPathForCurrentHost(role ServerRole) (string, error) {
 }
 
 // DaemonLogsPathForRemote returns the expected graft daemon logs path for a remote user.
-// Uses GRAFT_STATE_HOME or XDG_STATE_HOME, falling back to ~/.local/state/graft/remote/logs.
+// Ignores local env vars; see graftStateHomeRemote.
 func DaemonLogsPathForRemote(homeDir string) (string, error) {
-	return daemonLogsPath(graftStateHome(homeDir), ServerRoleRemote)
+	return daemonLogsPath(graftStateHomeRemote(homeDir), ServerRoleRemote)
 }
 
 // SessionsRoot returns the expected graft sessions path for the current user.

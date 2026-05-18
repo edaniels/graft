@@ -666,14 +666,13 @@ func (mgr *ConnectionManager) EstablishSynchronization(
 	name string,
 	syncIntent SynchronizationIntent,
 	syncManager *synchronization.Manager,
-	syncProtoNum int,
 ) error {
 	conn, err := mgr.Connection(name)
 	if err != nil {
 		return err
 	}
 
-	if err := conn.EstablishSynchronization(ctx, syncIntent, syncManager, syncProtoNum); err != nil {
+	if err := conn.EstablishSynchronization(ctx, syncIntent, syncManager); err != nil {
 		return errors.Wrap(err)
 	}
 

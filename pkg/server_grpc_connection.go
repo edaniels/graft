@@ -601,7 +601,6 @@ func (srv *Server) SyncFilesToConnection(
 		req.GetToConnectionName(),
 		syncIntent,
 		srv.synchronizationManager,
-		srv.syncProtoNum,
 	); err != nil {
 		return nil, err
 	}

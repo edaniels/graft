@@ -197,14 +197,16 @@ func runDaemon() error {
 
 	runtimeCtx.SignalStartupDone()
 
-	success = true
-	if respondErr := respondToDaemonizerSignal(success, daemonIsDaemonized, daemonIsRestart); respondErr != nil {
-		return respondErr
-	}
-
+	// Bind the socket before signaling the parent. If we signal first the
+	// caller's next dial races the bind and gets "connection failed".
 	runErr := server.Run(runtimeCtx.Ctx)
 	if runErr != nil {
 		return errors.Wrap(runErr)
+	}
+
+	success = true
+	if respondErr := respondToDaemonizerSignal(success, daemonIsDaemonized, daemonIsRestart); respondErr != nil {
+		return respondErr
 	}
 
 	<-runtimeCtx.ShutdownSignal

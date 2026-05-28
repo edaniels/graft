@@ -563,6 +563,7 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, 
 	if conns := mgr.connMgr.Connections(); len(conns) == 1 {
 		for _, conn := range conns {
 			logger.Log(ctx, slogLevelNoisy, "using sole connection as fallback", "name", conn.Name())
+
 			return conn, nil
 		}
 	}

@@ -14,7 +14,7 @@ var reportCwdCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.ReportCWD(ctx, reportCwdPID, args[0])
@@ -33,7 +33,7 @@ var runShimmedCmdCmd = &cobra.Command{
 	Short:  "Run a shimmed command (shim script plumbing)",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), false)
+		client, ctx := newClient(cmd.Context(), cmd, args, false)
 		defer client.Close()
 
 		exitCode, err := client.RunShimmedCommand(
@@ -45,10 +45,10 @@ var runShimmedCmdCmd = &cobra.Command{
 			runShimmedSudo,
 		)
 		if err != nil {
-			return cliExit(err, 1)
+			return cliExit(cmd, args, err, 1)
 		}
 
-		return cliExit("", exitCode)
+		return cliExit(cmd, args, "", exitCode)
 	},
 }
 

@@ -15,6 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/edaniels/graft/errors"
 )
 
@@ -553,9 +557,27 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, 
 	if cwd != "" {
 		logger.Log(ctx, slogLevelNoisy, "lookup connection by cwd", "cwd", cwd)
 
-		selectedConn, haveConn := mgr.connMgr.connectionByCWD(ctx, cwd)
+		selectedConn, haveConn := mgr.connMgr.connectionByCWD(ctx, cwd, false)
 		if haveConn {
 			return selectedConn, nil
+		}
+
+		// the user likely meant to use the background connection here
+		if len(mgr.connMgr.Connections()) == 1 {
+			selectedConn, haveConn := mgr.connMgr.connectionByCWD(ctx, cwd, true)
+			if haveConn {
+				statusWithDetails, err := status.New(codes.InvalidArgument, "failed to find an eligible connection").
+					WithDetails(&errdetails.ErrorInfo{
+						Metadata: map[string]string{
+							errors.ErrorMetadataFieldConnectionNameHint: selectedConn.Name(),
+						},
+					})
+				if err != nil {
+					return nil, errors.Wrap(err)
+				}
+
+				return nil, errors.Wrap(statusWithDetails.Err())
+			}
 		}
 	}
 

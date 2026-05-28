@@ -121,7 +121,7 @@ func TestRunInitProject(t *testing.T) {
 
 		resetInitFlags()
 
-		err := runInitProject(dir, "ubuntu@myhost:~/proj")
+		err := runInitProject(nil, nil, dir, "ubuntu@myhost:~/proj")
 		test.That(t, err, test.ShouldBeNil)
 
 		data, err := os.ReadFile(filepath.Join(dir, "graft.yaml"))
@@ -145,7 +145,7 @@ func TestRunInitProject(t *testing.T) {
 
 		resetInitFlags()
 
-		err := runInitProject(dir, "ssh://ubuntu@myhost:~/proj")
+		err := runInitProject(nil, nil, dir, "ssh://ubuntu@myhost:~/proj")
 		test.That(t, err, test.ShouldBeNil)
 
 		data, err := os.ReadFile(filepath.Join(dir, "graft.yaml"))
@@ -169,7 +169,7 @@ func TestRunInitProject(t *testing.T) {
 
 		initSync = true
 
-		err := runInitProject(dir, "ubuntu@myhost:~/proj")
+		err := runInitProject(nil, nil, dir, "ubuntu@myhost:~/proj")
 		test.That(t, err, test.ShouldBeNil)
 
 		data, err := os.ReadFile(filepath.Join(dir, "graft.yaml"))
@@ -191,7 +191,7 @@ func TestRunInitProject(t *testing.T) {
 
 		resetInitFlags()
 
-		err = runInitProject(dir, "ubuntu@myhost")
+		err = runInitProject(nil, nil, dir, "ubuntu@myhost")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "already exists")
 	})
@@ -205,7 +205,7 @@ func TestRunInitProject(t *testing.T) {
 
 		initForce = true
 
-		err = runInitProject(dir, "ubuntu@myhost")
+		err = runInitProject(nil, nil, dir, "ubuntu@myhost")
 		test.That(t, err, test.ShouldBeNil)
 	})
 }

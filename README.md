@@ -26,30 +26,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://graft.run/install.sh | sh
 
 Options: `--install-dir <dir>`, `--version <tag>`
 
-#### Alternative Installation methods:
-
-<details>
-<summary>Nix Flakes</summary>
-
-```nix
-# In your flake inputs add graft:
-inputs = {
-    # ...
-    graft.url = "github:edaniels/graft";
-    # ...
-}
-
-# In your configuration add graft to your systemPackages:
-# ${system} should be defined as your current platform. Ex: "x86_64-linux" or "aarch64-darwin".
-environment.systemPackages = [
-    # ...
-    graft.packages.${system}.default
-    # ...
-]
-```
-
-</details>
-
 ## Quick Start
 
 **1. Activate shell integration** (add to your shell rc file):

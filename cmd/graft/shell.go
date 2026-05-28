@@ -7,16 +7,16 @@ var shellTo string
 var shellCmd = &cobra.Command{
 	Use:   "shell",
 	Short: "Open a shell on a remote connection",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, ctx := newClient(cmd.Context(), false)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), cmd, args, false)
 		defer client.Close()
 
 		exitCode, err := client.RemoteShell(ctx, shellTo)
 		if err != nil {
-			return cliExit(err, 1)
+			return cliExit(cmd, args, err, 1)
 		}
 
-		return cliExit("", exitCode)
+		return cliExit(cmd, args, "", exitCode)
 	},
 }
 

@@ -181,6 +181,33 @@ func TestSelectConnectionClearPin(t *testing.T) {
 	test.That(t, conn.Name(), test.ShouldEqual, "connA")
 }
 
+func TestSelectConnectionSingleConnectionFallback(t *testing.T) {
+	rootA := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"only-conn": newTestConnection("only-conn", rootA),
+	})
+
+	pid := uint64(99991)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99991")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+
+	// Set CWD to something outside any connection root.
+	err := mgr.UpdateSessionCWD(ctx, pid, t.TempDir())
+	test.That(t, err, test.ShouldBeNil)
+
+	sess, err := mgr.SessionByPID(pid)
+	test.That(t, err, test.ShouldBeNil)
+
+	// With only one connection, selectConnection should auto-select it since all other fallbacks fail
+	conn, err := mgr.selectConnection(ctx, sess, "", "/somewhere/else")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, conn.Name(), test.ShouldEqual, "only-conn")
+}
+
 func TestPinConnectionValidatesExists(t *testing.T) {
 	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{})
 

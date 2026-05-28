@@ -527,7 +527,8 @@ func (mgr *SessionManager) Which(
 // The selection hierarchy is:
 // 1. Explicit connection name
 // 2. Session-pinned connection (via `graft use`)
-// 3. CWD-based auto-selection.
+// 3. CWD-based auto-selection
+// 4. Sole-connection fallback (if exactly one connection exists).
 func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, connName string, cwd string) (*Connection, error) {
 	logger := slog.Default().With("pid", sess.pid)
 
@@ -556,6 +557,13 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, 
 		selectedConn, haveConn := mgr.connMgr.connectionByCWD(ctx, cwd)
 		if haveConn {
 			return selectedConn, nil
+		}
+	}
+
+	if conns := mgr.connMgr.Connections(); len(conns) == 1 {
+		for _, conn := range conns {
+			logger.Log(ctx, slogLevelNoisy, "using sole connection as fallback", "name", conn.Name())
+			return conn, nil
 		}
 	}
 

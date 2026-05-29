@@ -560,15 +560,7 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, 
 		}
 	}
 
-	if conns := mgr.connMgr.Connections(); len(conns) == 1 {
-		for _, conn := range conns {
-			logger.Log(ctx, slogLevelNoisy, "using sole connection as fallback", "name", conn.Name())
-
-			return conn, nil
-		}
-	}
-
-	return nil, errors.New("failed to find an eligible connection")
+	return nil, errors.New("failed to find an eligible connection. To use without an explicit connection pin a session with 'graft use'")
 }
 
 // resolveSessionConnection returns the connection for a session, applying the

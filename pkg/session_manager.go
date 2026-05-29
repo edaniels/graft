@@ -527,8 +527,7 @@ func (mgr *SessionManager) Which(
 // The selection hierarchy is:
 // 1. Explicit connection name
 // 2. Session-pinned connection (via `graft use`)
-// 3. CWD-based auto-selection
-// 4. Sole-connection fallback (if exactly one connection exists).
+// 3. CWD-based auto-selection.
 func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, connName string, cwd string) (*Connection, error) {
 	logger := slog.Default().With("pid", sess.pid)
 

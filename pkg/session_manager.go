@@ -560,13 +560,13 @@ func (mgr *SessionManager) selectConnection(ctx context.Context, sess *Session, 
 	}
 
 	for connName = range mgr.connMgr.Connections() {
-		break
+		return nil, errors.Errorf(
+			"failed to find an eligible connection; to use without an explicit connection pin with 'graft use %s'",
+			connName,
+		)
 	}
 
-	return nil, errors.Errorf(
-		"failed to find an eligible connection; to use without an explicit connection pin with 'graft use %s'",
-		connName,
-	)
+	return nil, errors.New("failed to find an eligible connection")
 }
 
 // resolveSessionConnection returns the connection for a session, applying the

@@ -24,10 +24,10 @@ var runCmd = &cobra.Command{
 			return cmd.Help()
 		}
 		if err != nil {
-			return cliExit(err, 1)
+			return cliExit(cmd, args, err, 1)
 		}
 
-		client, ctx := newClient(cmd.Context(), false)
+		client, ctx := newClient(cmd.Context(), cmd, args, false)
 		defer client.Close()
 
 		var exitCode int
@@ -37,10 +37,10 @@ var runCmd = &cobra.Command{
 			exitCode, err = client.RunCommand(ctx, ra.command[0], ra.command[1:], ra.to)
 		}
 		if err != nil {
-			return cliExit(err, 1)
+			return cliExit(cmd, args, err, 1)
 		}
 
-		return cliExit("", exitCode)
+		return cliExit(cmd, args, "", exitCode)
 	},
 }
 

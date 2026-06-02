@@ -41,8 +41,8 @@ var daemonCmd = &cobra.Command{
 var daemonLogsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "Show recent daemon logs",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.PrintDaemonLogs(ctx)
@@ -52,12 +52,12 @@ var daemonLogsCmd = &cobra.Command{
 var daemonStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the running daemon",
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if warnIfServiceManaged() {
 			return nil
 		}
 
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.Shutdown(ctx)
@@ -67,8 +67,8 @@ var daemonStopCmd = &cobra.Command{
 var daemonRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the running daemon",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.Restart(ctx)
@@ -80,8 +80,8 @@ var daemonStatusConnection string
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show daemon health, version, and recent logs",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.PrintDaemonStatus(ctx, daemonStatusConnection)

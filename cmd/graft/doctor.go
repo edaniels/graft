@@ -59,7 +59,7 @@ destination. All checks are read-only and do not modify state.`,
 		}
 
 		if hasFailure {
-			return cliExit("", 1)
+			return cliExit(cmd, args, "", 1)
 		}
 
 		return nil

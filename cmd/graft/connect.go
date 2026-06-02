@@ -37,13 +37,13 @@ Destination formats:
 
 Use --sync with local_dir and remote_dir to enable file synchronization.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		localDir, destination, err := parseConnectArgs(args)
+		localDir, destination, err := parseConnectArgs(cmd, args)
 		if err != nil {
 			return err
 		}
 
 		if destination == "" {
-			return connectFromProject(cmd)
+			return connectFromProject(cmd, args)
 		}
 
 		var remoteDir string
@@ -64,7 +64,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 			localDir = absDir
 		}
 
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		fwdCommands, fwdPorts := partitionForwardArgs(connectForward)
@@ -84,7 +84,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 		case strings.HasPrefix(destination, "docker://"):
 			params.ImageTag = strings.TrimPrefix(destination, "docker://")
 			if params.ImageTag == "" {
-				return cliExit("docker:// requires an image tag", 1)
+				return cliExit(cmd, args, "docker:// requires an image tag", 1)
 			}
 
 			params.OSName = connectOS
@@ -92,7 +92,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 			return client.InitializeDockerConnection(ctx, params)
 		default:
 			if connectOS != "" {
-				return cliExit("--os is only valid for docker:// destinations", 1)
+				return cliExit(cmd, args, "--os is only valid for docker:// destinations", 1)
 			}
 
 			params.Destination = destination
@@ -190,18 +190,18 @@ func parseDestinationRemoteDir(dest string) (string, string) {
 	return dest, ""
 }
 
-func parseConnectArgs(args []string) (string, string, error) {
+func parseConnectArgs(cmd *cobra.Command, args []string) (string, string, error) {
 	switch len(args) {
 	case 0:
 		return "", "", nil
 	case 2:
 		return args[0], args[1], nil
 	default:
-		return "", "", cliExit("local_dir and destination required", 1)
+		return "", "", cliExit(cmd, args, "local_dir and destination required", 1)
 	}
 }
 
-func connectFromProject(cmd *cobra.Command) error {
+func connectFromProject(cmd *cobra.Command, args []string) error {
 	// look for project
 	graftYamlFile, err := os.Open("graft.yaml")
 	if err != nil {
@@ -209,7 +209,7 @@ func connectFromProject(cmd *cobra.Command) error {
 			return errors.Wrap(err)
 		}
 
-		return cliExit("destination required", 1)
+		return cliExit(cmd, args, "destination required", 1)
 	}
 	defer graftYamlFile.Close()
 
@@ -268,7 +268,7 @@ func connectFromProject(cmd *cobra.Command) error {
 		}
 	}
 
-	client, ctx := newClient(cmd.Context(), true)
+	client, ctx := newClient(cmd.Context(), cmd, args, true)
 	defer client.Close()
 
 	params := resolveProjectConnectParams(resolveProjectConnectInput{
@@ -336,7 +336,7 @@ var disconnectCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeConnectionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.RemoveConnection(ctx, args[0])

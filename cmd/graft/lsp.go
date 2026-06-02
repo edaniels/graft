@@ -18,7 +18,7 @@ var lspCmd = &cobra.Command{
 			os.Stdout,
 			os.Stderr,
 			func(err error) error {
-				return cliExit(err, 1)
+				return cliExit(cmd, args, err, 1)
 			},
 			false,
 			logger,

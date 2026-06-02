@@ -34,29 +34,29 @@ Project mode (2 args):
 
 Example:
   graft init . ubuntu@myhost:~/mydir --sync --name myconn --forward make`,
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if initWorkspace {
 			if len(args) != 0 {
-				return cliExit("--workspace does not accept arguments", 1)
+				return cliExit(cmd, args, "--workspace does not accept arguments", 1)
 			}
 
-			return runInitWorkspace()
+			return runInitWorkspace(cmd, args)
 		}
 
 		if len(args) != 2 {
-			return cliExit("expected 2 arguments: local_dir and destination", 1)
+			return cliExit(cmd, args, "expected 2 arguments: local_dir and destination", 1)
 		}
 
 		if initName == "" {
-			return cliExit("--name is required", 1)
+			return cliExit(cmd, args, "--name is required", 1)
 		}
 
-		return runInitProject(args[0], args[1])
+		return runInitProject(cmd, args, args[0], args[1])
 	},
 }
 
-func runInitWorkspace() error {
-	if err := checkExistingConfig("."); err != nil {
+func runInitWorkspace(cmd *cobra.Command, args []string) error {
+	if err := checkExistingConfig(cmd, args, "."); err != nil {
 		return err
 	}
 
@@ -78,13 +78,13 @@ func runInitWorkspace() error {
 	return nil
 }
 
-func runInitProject(localDir, rawDestination string) error {
+func runInitProject(cmd *cobra.Command, args []string, localDir, rawDestination string) error {
 	absDir, err := filepath.Abs(localDir)
 	if err != nil {
 		return errors.Wrap(err)
 	}
 
-	if checkErr := checkExistingConfig(absDir); checkErr != nil {
+	if checkErr := checkExistingConfig(cmd, args, absDir); checkErr != nil {
 		return checkErr
 	}
 
@@ -146,13 +146,13 @@ func runInitProject(localDir, rawDestination string) error {
 	return nil
 }
 
-func checkExistingConfig(dir string) error {
+func checkExistingConfig(cmd *cobra.Command, args []string, dir string) error {
 	if initForce {
 		return nil
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, "graft.yaml")); err == nil {
-		return cliExit("graft.yaml already exists (use --force to overwrite)", 1)
+		return cliExit(cmd, args, "graft.yaml already exists (use --force to overwrite)", 1)
 	}
 
 	return nil

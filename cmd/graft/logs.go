@@ -8,7 +8,7 @@ var logsCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeConnectionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.DumpLogs(ctx, args[0])

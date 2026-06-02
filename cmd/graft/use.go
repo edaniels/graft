@@ -19,10 +19,10 @@ Use --clear to remove the pin and resume CWD-based selection.`,
 	ValidArgsFunction: completeConnectionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 && !useClear {
-			return cliExit("connection name required (or use --clear to unpin)", 1)
+			return cliExit(cmd, args, "connection name required (or use --clear to unpin)", 1)
 		}
 
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		var connName string
@@ -31,7 +31,7 @@ Use --clear to remove the pin and resume CWD-based selection.`,
 		}
 
 		if err := client.PinConnection(ctx, connName); err != nil {
-			return cliExit(err, 1)
+			return cliExit(cmd, args, err, 1)
 		}
 
 		if connName != "" {

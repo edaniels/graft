@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/status"
 	"gopkg.in/yaml.v2"
 
@@ -63,7 +66,25 @@ func (e *exitCodeError) Error() string {
 	return e.msg
 }
 
-func cliExit(err any, code int) error {
+func approximateOriginalCommand(cmd *cobra.Command, args []string) []string {
+	parts := []string{cmd.CalledAs()}
+	for p := cmd.Parent(); p != nil; p = p.Parent() {
+		name := p.CalledAs()
+		if p.Parent() == nil { // p is the root
+			name = os.Args[0]
+		}
+
+		parts = append([]string{name}, parts...)
+	}
+
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		parts = append(parts, "--"+f.Name+"="+f.Value.String())
+	})
+
+	return append(parts, args...)
+}
+
+func cliExit(cmd *cobra.Command, args []string, err any, code int) error {
 	if code == 0 {
 		return nil
 	}
@@ -74,6 +95,28 @@ func cliExit(err any, code int) error {
 	case error:
 		if s := status.Convert(e); s != nil {
 			msg = s.Message()
+			// check if we should suggest a connection
+			if cmd.Flag("to") != nil {
+				for _, details := range s.Details() {
+					if errInfo, ok := details.(*errdetails.ErrorInfo); ok {
+						connNameHint, ok := errInfo.GetMetadata()[errors.ErrorMetadataFieldConnectionNameHint]
+						if ok {
+							originalCmd := append(approximateOriginalCommand(cmd, args), "--to", connNameHint)
+							msg = fmt.Sprintf(
+								"%s; the following might work:\n\t"+
+									"%s\n"+
+									"OR pin the connection to this session with:\n\t"+
+									"%s use %s", msg,
+								strings.Join(originalCmd, " "),
+								os.Args[0],
+								connNameHint,
+							)
+
+							break
+						}
+					}
+				}
+			}
 		} else {
 			msg = e.Error()
 		}
@@ -86,13 +129,13 @@ func cliExit(err any, code int) error {
 	return &exitCodeError{code: code, msg: msg}
 }
 
-func newClient(ctx context.Context, withOOBMsgs bool) (*graft.LocalClient, context.Context) {
+func newClient(ctx context.Context, cmd *cobra.Command, args []string, withOOBMsgs bool) (*graft.LocalClient, context.Context) {
 	client, ctx, err := graft.NewLocalClient(
 		ctx,
 		os.Stdout,
 		os.Stderr,
 		func(err error) error {
-			return cliExit(err, 1)
+			return cliExit(cmd, args, err, 1)
 		},
 		withOOBMsgs,
 		logger,

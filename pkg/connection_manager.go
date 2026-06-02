@@ -791,14 +791,14 @@ func (mgr *ConnectionManager) RefreshConnectionRootsFile() {
 	mgr.writeConnectionRootsFile()
 }
 
-func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string) (*Connection, bool) {
+func (mgr *ConnectionManager) connectionByCWD(ctx context.Context, cwd string, allowBackground bool) (*Connection, bool) {
 	mgr.connMgrMu.Lock()
 	defer mgr.connMgrMu.Unlock()
 
-	return mgr.matchConnectionByCWD(ctx, cwd)
+	return mgr.matchConnectionByCWD(ctx, cwd, allowBackground)
 }
 
-func (mgr *ConnectionManager) matchConnectionByCWD(ctx context.Context, cwd string) (*Connection, bool) {
+func (mgr *ConnectionManager) matchConnectionByCWD(ctx context.Context, cwd string, allowBackground bool) (*Connection, bool) {
 	if cwd == "" {
 		return nil, false
 	}
@@ -822,7 +822,7 @@ func (mgr *ConnectionManager) matchConnectionByCWD(ctx context.Context, cwd stri
 	matches := make([]*Connection, 0, len(mgr.connections))
 
 	for _, conn := range mgr.connections {
-		if conn.background {
+		if !allowBackground && conn.background {
 			continue
 		}
 

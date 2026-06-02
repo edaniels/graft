@@ -14,14 +14,14 @@ var syncCmd = &cobra.Command{
 	Short: "Sync files to a remote connection",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		toConn := syncTo
 		if toConn == "" {
 			selectResp, err := client.SelectConnectionForCWD(ctx)
 			if err != nil {
-				return cliExit("--to required (no connection detected for current directory)", 1)
+				return cliExit(cmd, args, "--to required (no connection detected for current directory)", 1)
 			}
 
 			toConn = selectResp.GetConnectionName()

@@ -43,7 +43,7 @@ var connectionSetRootCmd = &cobra.Command{
 			remoteDir = args[2]
 		}
 
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		if setErr := client.SetConnectionRoots(ctx, connName, absDir, remoteDir); setErr != nil {
@@ -59,8 +59,8 @@ var connCmdShellTo string
 var connectionCommandsCmd = &cobra.Command{
 	Use:   "available-commands",
 	Short: "Print available commands; helpful for debugging shim availability",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		if err := client.PrintConnectionAvailableCommands(ctx, connCmdShellTo); err != nil {

@@ -16,8 +16,8 @@ var updateCheck bool
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update graft to the latest version",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		return runUpdate(cmd.Context())
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runUpdate(cmd.Context(), cmd, args)
 	},
 }
 
@@ -27,10 +27,10 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-func runUpdate(ctx context.Context) error {
+func runUpdate(ctx context.Context, cmd *cobra.Command, args []string) error {
 	lock, err := graft.AcquireUpdateLock()
 	if err != nil {
-		return cliExit(err, 1)
+		return cliExit(cmd, args, err, 1)
 	}
 	defer lock.Close()
 
@@ -42,7 +42,7 @@ func runUpdate(ctx context.Context) error {
 
 	result, err := graft.CheckForUpdate(ctx, client, currentVersion)
 	if err != nil {
-		return cliExit(err, 1)
+		return cliExit(cmd, args, err, 1)
 	}
 
 	if !result.UpdateAvailable {
@@ -77,7 +77,7 @@ func runUpdate(ctx context.Context) error {
 
 	tmpPath, targetPath, err := graft.DownloadAndVerify(ctx, client, result.LatestVersion)
 	if err != nil {
-		return cliExit(err, 1)
+		return cliExit(cmd, args, err, 1)
 	}
 
 	fmt.Fprintf(os.Stderr, "Checksum verified.\n")
@@ -86,17 +86,17 @@ func runUpdate(ctx context.Context) error {
 	if err := graft.ReplaceBinary(tmpPath, targetPath); err != nil {
 		os.Remove(tmpPath)
 
-		return cliExit(err, 1)
+		return cliExit(cmd, args, err, 1)
 	}
 
 	fmt.Fprintf(os.Stderr, "Updated: %s → %s\n", currentVersion, color.GreenString(result.LatestVersion))
 
-	restartDaemonAfterUpdate(ctx)
+	restartDaemonAfterUpdate(ctx, cmd, args)
 
 	return nil
 }
 
-func restartDaemonAfterUpdate(ctx context.Context) {
+func restartDaemonAfterUpdate(ctx context.Context, cmd *cobra.Command, args []string) {
 	sockPath, err := graft.DaemonSocketPathForCurrentHost(graft.ServerRoleLocal)
 	if err != nil {
 		return
@@ -110,7 +110,7 @@ func restartDaemonAfterUpdate(ctx context.Context) {
 
 	fmt.Fprintf(os.Stderr, "Restarting daemon...\n")
 
-	client, rpcCtx := newClient(ctx, false)
+	client, rpcCtx := newClient(ctx, cmd, args, false)
 	defer client.Close()
 
 	if restartErr := client.Restart(rpcCtx); restartErr != nil {

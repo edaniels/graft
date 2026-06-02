@@ -47,14 +47,14 @@ Port spec format: [local_port:]remote_port[/protocol]
   3000:8080/udp  Full form`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		toConn := forwardTo
 		if toConn == "" {
 			selectResp, err := client.SelectConnectionForCWD(ctx)
 			if err != nil {
-				return cliExit("--to required (no connection detected for current directory)", 1)
+				return cliExit(cmd, args, "--to required (no connection detected for current directory)", 1)
 			}
 
 			toConn = selectResp.GetConnectionName()
@@ -81,8 +81,8 @@ Port spec format: [local_port:]remote_port[/protocol]
 var forwardListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List forwarded commands and ports",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		toConn := forwardTo
@@ -105,14 +105,14 @@ var forwardRemoveCmd = &cobra.Command{
 	Short: "Remove forwarded commands or ports from a connection",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		toConn := forwardTo
 		if toConn == "" {
 			selectResp, err := client.SelectConnectionForCWD(ctx)
 			if err != nil {
-				return cliExit("--to required (no connection detected for current directory)", 1)
+				return cliExit(cmd, args, "--to required (no connection detected for current directory)", 1)
 			}
 
 			toConn = selectResp.GetConnectionName()
@@ -148,10 +148,10 @@ var forwardWhichCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if graft.IsPortSpec(args[0]) {
-			return cliExit("port forwards are connection-wide; use 'graft forward list' to see them", 1)
+			return cliExit(cmd, args, "port forwards are connection-wide; use 'graft forward list' to see them", 1)
 		}
 
-		client, ctx := newClient(cmd.Context(), true)
+		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()
 
 		return client.Which(ctx, args[0])

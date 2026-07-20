@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/denormal/go-gitignore"
 	"github.com/mutagen-io/mutagen/pkg/selection"
 	"github.com/mutagen-io/mutagen/pkg/synchronization"
 	"github.com/mutagen-io/mutagen/pkg/synchronization/core"
@@ -410,19 +409,7 @@ func (conn *Connection) EstablishSynchronization(
 		return nil
 	}
 
-	var ignores []string
-
-	rd, ignoreErr := os.ReadFile(filepath.Join(syncIntent.FromLocal, ".gitignore"))
-	if ignoreErr == nil {
-		parser := gitignore.NewParser(bytes.NewReader(rd), func(_ gitignore.Error) bool {
-			return true
-		})
-
-		patterns := parser.Parse()
-		for _, pattern := range patterns {
-			ignores = append(ignores, pattern.String())
-		}
-	}
+	ignores := parseGitignoreToMutagenIgnores(syncIntent.FromLocal)
 
 	resolvedPath, resolveErr := conn.daemon.Connector().RunOneShotCommand(ctx, "echo "+syncIntent.ToRemote)
 	if resolveErr != nil {
@@ -459,9 +446,27 @@ func (conn *Connection) EstablishSynchronization(
 	// Resume a paused session if one matches this intent. Keeping the ancestor
 	// archive across restarts is what stops locally-deleted files from
 	// coming back on the next sync.
-	existingID, existingPaused, lookupErr := findExistingSessionByName(ctx, syncManager, sessionName)
+	existingID, existingPaused, existingIgnores, lookupErr := findExistingSessionByName(ctx, syncManager, sessionName)
 	if lookupErr != nil {
 		return errors.WrapPrefix(lookupErr, "error looking up existing sync session")
+	}
+
+	// A session's ignores are fixed at creation (mutagen has no reconfigure
+	// API), so a session whose recorded ignores no longer match the current
+	// .gitignore must be terminated and recreated. This discards the ancestor
+	// archive; remote files whose local counterparts were deleted may reappear
+	// locally on the next sync.
+	if existingID != "" && !slices.Equal(existingIgnores, ignores) {
+		slog.WarnContext(ctx, "ignore patterns changed; recreating sync session",
+			"session_id", existingID, "name", sessionName)
+
+		if termErr := syncManager.Terminate(
+			ctx, &selection.Selection{Specifications: []string{existingID}}, "",
+		); termErr != nil {
+			return errors.WrapPrefix(termErr, "error terminating sync session with stale ignores")
+		}
+
+		existingID = ""
 	}
 
 	var sessionID string

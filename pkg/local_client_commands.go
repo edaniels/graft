@@ -363,6 +363,10 @@ type ConnectParams struct {
 	SyncSource string
 	SyncDest   string
 
+	// SyncGit additionally replicates the sync source's .git directory
+	// one-way so the remote has a read-only git view.
+	SyncGit bool
+
 	// Background excludes this connection from CWD-based auto-selection.
 	Background bool
 }
@@ -452,7 +456,7 @@ func (client *LocalClient) postInitConnection(
 			syncDest = params.SyncDest
 		}
 
-		if syncErr := client.Sync(ctx, syncSource, syncDest, resolvedConnectionName); syncErr != nil {
+		if syncErr := client.Sync(ctx, syncSource, syncDest, resolvedConnectionName, params.SyncGit); syncErr != nil {
 			return syncErr
 		}
 	}
@@ -484,7 +488,9 @@ func (client *LocalClient) printConnectSummary(name, localRoot, remoteRoot strin
 }
 
 // Sync sets up bidi file sync between the source directory and a connection.
-func (client *LocalClient) Sync(ctx context.Context, sourceDir, destDir, toConnName string) error {
+// syncGit additionally replicates the source's .git directory one-way so the
+// remote has a read-only git view.
+func (client *LocalClient) Sync(ctx context.Context, sourceDir, destDir, toConnName string, syncGit bool) error {
 	if sourceDir == "" {
 		sourceDir = client.cwd
 	}
@@ -493,6 +499,7 @@ func (client *LocalClient) Sync(ctx context.Context, sourceDir, destDir, toConnN
 		SourceDir:        sourceDir,
 		DestDir:          destDir,
 		ToConnectionName: toConnName,
+		SyncGit:          syncGit,
 	}); err != nil {
 		return client.handleError(err)
 	}

@@ -436,13 +436,7 @@ func (srv *Server) reapOrphanSyncs(ctx context.Context, pending []ConnectionConf
 		return
 	}
 
-	expected := make(map[string]bool)
-
-	for _, conf := range pending {
-		for _, s := range conf.Synchronizations {
-			expected[syncSessionName(conf.Name, SynchronizationIntentFromConfig(s))] = true
-		}
-	}
+	expected := expectedSyncSessionNames(pending)
 
 	_, states, err := srv.synchronizationManager.List(ctx, &selection.Selection{All: true}, 0)
 	if err != nil {
@@ -539,16 +533,17 @@ func computeMissingSyncs(desired []SynchronizationIntentConfig, active []Synchro
 		return nil
 	}
 
-	activeByLocal := make(map[string]string, len(active))
+	activeByLocal := make(map[string]SynchronizationIntent, len(active))
 	for _, a := range active {
-		activeByLocal[a.FromLocal] = a.ToRemote
+		activeByLocal[a.FromLocal] = a
 	}
 
 	missing := make([]SynchronizationIntent, 0, len(desired))
 
 	for _, d := range desired {
 		intent := SynchronizationIntentFromConfig(d)
-		if existing, ok := activeByLocal[intent.FromLocal]; ok && existing == intent.ToRemote {
+		if existing, ok := activeByLocal[intent.FromLocal]; ok &&
+			existing.ToRemote == intent.ToRemote && existing.SyncGit == intent.SyncGit {
 			continue
 		}
 
@@ -556,6 +551,27 @@ func computeMissingSyncs(desired []SynchronizationIntentConfig, active []Synchro
 	}
 
 	return missing
+}
+
+// expectedSyncSessionNames returns the session names implied by the given
+// configs: one per synchronization, plus a .git replica name for each
+// synchronization that enables SyncGit. The orphan reaper terminates any
+// graft-owned session not in this set.
+func expectedSyncSessionNames(pending []ConnectionConfig) map[string]bool {
+	expected := make(map[string]bool)
+
+	for _, conf := range pending {
+		for _, s := range conf.Synchronizations {
+			intent := SynchronizationIntentFromConfig(s)
+			expected[syncSessionName(conf.Name, intent)] = true
+
+			if intent.SyncGit {
+				expected[syncSessionName(conf.Name, gitReplicaIntent(intent))] = true
+			}
+		}
+	}
+
+	return expected
 }
 
 // computeMissingForwardCommands returns the desired forward intents not already

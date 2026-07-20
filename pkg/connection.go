@@ -42,6 +42,11 @@ const (
 type activeSync struct {
 	destination string
 	closeFunc   func()
+	// syncGit records whether the intent enables the .git replica session.
+	// gitCloseFunc pauses that session; it is nil when the replica is
+	// disabled.
+	syncGit      bool
+	gitCloseFunc func()
 }
 
 // Connection is a lightweight per-connection wrapper around a shared remoteDaemon.
@@ -385,7 +390,7 @@ func (conn *Connection) Synchronizations() []SynchronizationIntent {
 
 	syncs := make([]SynchronizationIntent, 0, len(conn.synchronizations))
 	for from, to := range conn.synchronizations {
-		syncs = append(syncs, SynchronizationIntent{FromLocal: from, ToRemote: to.destination})
+		syncs = append(syncs, SynchronizationIntent{FromLocal: from, ToRemote: to.destination, SyncGit: to.syncGit})
 	}
 
 	return syncs
@@ -405,7 +410,8 @@ func (conn *Connection) EstablishSynchronization(
 
 	// Fast path: when reconciling from config (which stores already-resolved paths),
 	// the intent matches an active sync exactly. Skip without doing any remote I/O.
-	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok && existing.destination == syncIntent.ToRemote {
+	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok &&
+		existing.destination == syncIntent.ToRemote && existing.syncGit == syncIntent.SyncGit {
 		return nil
 	}
 
@@ -422,7 +428,11 @@ func (conn *Connection) EstablishSynchronization(
 	// an already-active resolved entry.
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
 		if existing.destination == syncIntent.ToRemote {
-			return nil
+			if existing.syncGit == syncIntent.SyncGit {
+				return nil
+			}
+
+			return conn.applyGitReplicaFlip(ctx, syncManager, syncIntent, existing)
 		}
 
 		return errors.Errorf(
@@ -441,89 +451,203 @@ func (conn *Connection) EstablishSynchronization(
 		return errors.New("connection is not available")
 	}
 
-	sessionName := syncSessionName(conn.Name(), syncIntent)
+	sessionID, err := conn.establishSession(ctx, cc, syncManager,
+		syncSessionName(conn.Name(), syncIntent),
+		syncIntent.FromLocal, syncIntent.ToRemote,
+		&synchronization.Configuration{
+			SynchronizationMode: core.SynchronizationMode_SynchronizationModeTwoWayResolved,
+			IgnoreSyntax:        ignore.Syntax_SyntaxMutagen,
+			IgnoreVCSMode:       ignore.IgnoreVCSMode_IgnoreVCSModeIgnore,
+			Ignores:             ignores,
+		},
+	)
+	if err != nil {
+		return err
+	}
 
-	// Resume a paused session if one matches this intent. Keeping the ancestor
-	// archive across restarts is what stops locally-deleted files from
-	// coming back on the next sync.
+	var gitCloseFunc func()
+	if syncIntent.SyncGit {
+		if gitCloseFunc, err = conn.establishGitReplica(ctx, cc, syncManager, syncIntent); err != nil {
+			return err
+		}
+	}
+
+	conn.synchronizations[syncIntent.FromLocal] = activeSync{
+		destination:  syncIntent.ToRemote,
+		closeFunc:    pauseSessionFunc(syncManager, sessionID),
+		syncGit:      syncIntent.SyncGit,
+		gitCloseFunc: gitCloseFunc,
+	}
+
+	return nil
+}
+
+// applyGitReplicaFlip handles an intent whose endpoints match an active sync
+// but whose SyncGit flag differs: only the .git replica session is
+// established or wound down; the primary session is untouched.
+func (conn *Connection) applyGitReplicaFlip(
+	ctx context.Context,
+	syncManager *synchronization.Manager,
+	syncIntent SynchronizationIntent,
+	existing activeSync,
+) error {
+	if syncIntent.SyncGit {
+		cc, err := conn.daemon.lockedRemoteClientConn()
+		if err != nil {
+			return errors.New("connection is not available")
+		}
+
+		gitCloseFunc, err := conn.establishGitReplica(ctx, cc, syncManager, syncIntent)
+		if err != nil {
+			return err
+		}
+
+		existing.gitCloseFunc = gitCloseFunc
+	} else {
+		if existing.gitCloseFunc != nil {
+			existing.gitCloseFunc()
+		}
+
+		// The orphan reaper terminates the now-unexpected replica session.
+		existing.gitCloseFunc = nil
+	}
+
+	existing.syncGit = syncIntent.SyncGit
+	conn.synchronizations[syncIntent.FromLocal] = existing
+
+	return nil
+}
+
+// establishGitReplica sets up the one-way .git replica session for the
+// intent, giving the remote a read-only git view: remote writes to .git are
+// reverted on the next flush rather than syncing back. Returns a pause func
+// for the session; when the replica is skipped because FromLocal has no
+// .git directory, the returned func is a no-op.
+func (conn *Connection) establishGitReplica(
+	ctx context.Context,
+	cc *grpc.ClientConn,
+	syncManager *synchronization.Manager,
+	syncIntent SynchronizationIntent,
+) (func(), error) {
+	gitIntent := gitReplicaIntent(syncIntent)
+
+	// A missing .git means FromLocal isn't a repository root; a .git file is
+	// a worktree/submodule gitdir pointer whose target is local-only, so
+	// replicating it would produce a dangling repository on the remote.
+	if info, statErr := os.Stat(gitIntent.FromLocal); statErr != nil || !info.IsDir() {
+		slog.WarnContext(ctx, "skipping git replica sync; local .git is not a directory",
+			"path", gitIntent.FromLocal)
+
+		return func() {}, nil //nolint:nilerr // a non-directory .git skips the replica by design
+	}
+
+	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, "mkdir -p "+gitIntent.ToRemote); mkdirErr != nil {
+		return nil, errors.WrapPrefix(mkdirErr, "error making directory for git replica remote path")
+	}
+
+	sessionID, err := conn.establishSession(ctx, cc, syncManager,
+		syncSessionName(conn.Name(), gitIntent),
+		gitIntent.FromLocal, gitIntent.ToRemote,
+		&synchronization.Configuration{
+			SynchronizationMode: core.SynchronizationMode_SynchronizationModeOneWayReplica,
+			IgnoreSyntax:        ignore.Syntax_SyntaxMutagen,
+			// The session root is itself a VCS directory; ignoring VCS
+			// content would ignore everything.
+			IgnoreVCSMode: ignore.IgnoreVCSMode_IgnoreVCSModePropagate,
+			Ignores:       gitReplicaIgnores,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return pauseSessionFunc(syncManager, sessionID), nil
+}
+
+// establishSession resumes a paused session matching sessionName, or creates
+// a fresh one from alphaPath to betaPath with the given configuration.
+// Resuming keeps the ancestor archive, which is what stops locally-deleted
+// files from coming back on the next sync.
+func (conn *Connection) establishSession(
+	ctx context.Context,
+	cc *grpc.ClientConn,
+	syncManager *synchronization.Manager,
+	sessionName string,
+	alphaPath, betaPath string,
+	config *synchronization.Configuration,
+) (string, error) {
 	existingID, existingPaused, existingIgnores, lookupErr := findExistingSessionByName(ctx, syncManager, sessionName)
 	if lookupErr != nil {
-		return errors.WrapPrefix(lookupErr, "error looking up existing sync session")
+		return "", errors.WrapPrefix(lookupErr, "error looking up existing sync session")
 	}
 
 	// A session's ignores are fixed at creation (mutagen has no reconfigure
-	// API), so a session whose recorded ignores no longer match the current
-	// .gitignore must be terminated and recreated. This discards the ancestor
-	// archive; remote files whose local counterparts were deleted may reappear
-	// locally on the next sync.
-	if existingID != "" && !slices.Equal(existingIgnores, ignores) {
+	// API), so a session whose recorded ignores no longer match the desired
+	// set must be terminated and recreated. This discards the ancestor
+	// archive; remote files whose local counterparts were deleted may
+	// reappear locally on the next sync.
+	if existingID != "" && !slices.Equal(existingIgnores, config.GetIgnores()) {
 		slog.WarnContext(ctx, "ignore patterns changed; recreating sync session",
 			"session_id", existingID, "name", sessionName)
 
 		if termErr := syncManager.Terminate(
 			ctx, &selection.Selection{Specifications: []string{existingID}}, "",
 		); termErr != nil {
-			return errors.WrapPrefix(termErr, "error terminating sync session with stale ignores")
+			return "", errors.WrapPrefix(termErr, "error terminating sync session with stale ignores")
 		}
 
 		existingID = ""
 	}
 
-	var sessionID string
 	if existingID != "" {
-		sessionID = existingID
-
 		if existingPaused {
 			if resumeErr := syncManager.Resume(
 				ContextWithConnRemoteClientConn(ctx, cc),
 				&selection.Selection{Specifications: []string{existingID}},
 				"",
 			); resumeErr != nil {
-				return errors.WrapPrefix(resumeErr, "error resuming existing sync")
+				return "", errors.WrapPrefix(resumeErr, "error resuming existing sync")
 			}
 		}
-	} else {
-		sessionID, err = syncManager.Create(
-			ContextWithConnRemoteClientConn(ctx, cc),
-			&urlpkg.URL{
-				Protocol: urlpkg.Protocol_Local,
-				Path:     syncIntent.FromLocal,
-			},
-			&urlpkg.URL{
-				Protocol: urlpkg.Protocol(syncProtoNum),
-				Host:     conn.Name(),
-				Path:     syncIntent.ToRemote,
-			},
-			&synchronization.Configuration{
-				SynchronizationMode: core.SynchronizationMode_SynchronizationModeTwoWayResolved,
-				IgnoreSyntax:        ignore.Syntax_SyntaxMutagen,
-				IgnoreVCSMode:       ignore.IgnoreVCSMode_IgnoreVCSModeIgnore,
-				Ignores:             ignores,
-			},
-			&synchronization.Configuration{},
-			&synchronization.Configuration{},
-			sessionName,
-			nil,
-			false,
-			"huh????",
-		)
-		if err != nil {
-			return errors.Wrap(err)
-		}
+
+		return existingID, nil
 	}
 
-	conn.synchronizations[syncIntent.FromLocal] = activeSync{
-		syncIntent.ToRemote,
-		func() {
-			// Pause, not Terminate: keep the ancestor archive on disk.
-			// Termination only happens in the orphan reaper.
-			if err := syncManager.Pause(context.Background(), &selection.Selection{Specifications: []string{sessionID}}, ""); err != nil {
-				slog.ErrorContext(ctx, "error pausing sync", "session_id", sessionID, "error", err)
-			}
+	sessionID, err := syncManager.Create(
+		ContextWithConnRemoteClientConn(ctx, cc),
+		&urlpkg.URL{
+			Protocol: urlpkg.Protocol_Local,
+			Path:     alphaPath,
 		},
+		&urlpkg.URL{
+			Protocol: urlpkg.Protocol(syncProtoNum),
+			Host:     conn.Name(),
+			Path:     betaPath,
+		},
+		config,
+		&synchronization.Configuration{},
+		&synchronization.Configuration{},
+		sessionName,
+		nil,
+		false,
+		"huh????",
+	)
+	if err != nil {
+		return "", errors.Wrap(err)
 	}
 
-	return nil
+	return sessionID, nil
+}
+
+// pauseSessionFunc returns a func that pauses the given session. Pause, not
+// Terminate: the ancestor archive stays on disk. Termination only happens in
+// the orphan reaper.
+func pauseSessionFunc(syncManager *synchronization.Manager, sessionID string) func() {
+	return func() {
+		if err := syncManager.Pause(context.Background(), &selection.Selection{Specifications: []string{sessionID}}, ""); err != nil {
+			slog.Error("error pausing sync", "session_id", sessionID, "error", err)
+		}
+	}
 }
 
 // MatchCWD transforms a local directory into a remote directory.
@@ -578,6 +702,10 @@ func (conn *Connection) Close() error {
 
 	for _, s := range syncs {
 		s.closeFunc()
+
+		if s.gitCloseFunc != nil {
+			s.gitCloseFunc()
+		}
 	}
 
 	return nil

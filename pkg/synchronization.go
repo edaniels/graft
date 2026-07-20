@@ -42,26 +42,27 @@ func syncSessionName(connName string, intent SynchronizationIntent) string {
 	return graftSyncNamePrefix + hex.EncodeToString(h.Sum(nil)[:10])
 }
 
-// findExistingSessionByName scans loaded sessions for a Name match. Returns
-// ("", false, nil) when not found.
+// findExistingSessionByName scans loaded sessions for a Name match, returning
+// the session's identifier, paused state, and the ignore patterns it was
+// created with. Returns ("", false, nil, nil) when not found.
 func findExistingSessionByName(
 	ctx context.Context,
 	mgr *synchronization.Manager,
 	name string,
-) (string, bool, error) {
+) (string, bool, []string, error) {
 	_, states, err := mgr.List(ctx, &selection.Selection{All: true}, 0)
 	if err != nil {
-		return "", false, errors.Wrap(err)
+		return "", false, nil, errors.Wrap(err)
 	}
 
 	for _, state := range states {
 		sess := state.GetSession()
 		if sess.GetName() == name {
-			return sess.GetIdentifier(), sess.GetPaused(), nil
+			return sess.GetIdentifier(), sess.GetPaused(), sess.GetConfiguration().GetIgnores(), nil
 		}
 	}
 
-	return "", false, nil
+	return "", false, nil, nil
 }
 
 // isGraftSyncName reports whether a mutagen session name was created by graft.

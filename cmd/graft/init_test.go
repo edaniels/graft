@@ -29,7 +29,7 @@ func TestBuildWorkspaceConfig(t *testing.T) {
 
 func TestBuildProjectConfig(t *testing.T) {
 	t.Run("basic with user@host", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "", nil, false, false)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "", nil, false, false, false)
 
 		test.That(t, cfg.Version, test.ShouldEqual, "v1")
 		test.That(t, cfg.Forwards, test.ShouldBeEmpty)
@@ -44,7 +44,7 @@ func TestBuildProjectConfig(t *testing.T) {
 	})
 
 	t.Run("basic without user", func(t *testing.T) {
-		cfg := buildProjectConfig("myconn", "myhost", "", "", nil, false, false)
+		cfg := buildProjectConfig("myconn", "myhost", "", "", nil, false, false, false)
 
 		dest := cfg.Destinations[testConnName]
 		test.That(t, dest.Host, test.ShouldEqual, "myhost")
@@ -52,21 +52,21 @@ func TestBuildProjectConfig(t *testing.T) {
 	})
 
 	t.Run("with remote dir as syncTo", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", nil, false, false)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", nil, false, false, false)
 
 		dest := cfg.Destinations["anvil"]
 		test.That(t, dest.SyncTo, test.ShouldEqual, "~/arc")
 	})
 
 	t.Run("with forwards", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "", []string{"pulumi", "kubectl", "k9s"}, false, false)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "", []string{"pulumi", "kubectl", "k9s"}, false, false, false)
 
 		test.That(t, cfg.Forwards, test.ShouldResemble, []string{"pulumi", "kubectl", "k9s"})
 		test.That(t, cfg.Destinations["anvil"].Prefix, test.ShouldBeFalse)
 	})
 
 	t.Run("with forwards and prefix", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", []string{"pulumi", "kubectl", "k9s"}, true, false)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", []string{"pulumi", "kubectl", "k9s"}, true, false, false)
 
 		test.That(t, cfg.Forwards, test.ShouldResemble, []string{"pulumi", "kubectl", "k9s"})
 		test.That(t, cfg.Destinations["anvil"].Prefix, test.ShouldBeTrue)
@@ -74,7 +74,7 @@ func TestBuildProjectConfig(t *testing.T) {
 	})
 
 	t.Run("with sync enabled", func(t *testing.T) {
-		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", nil, false, true)
+		cfg := buildProjectConfig("anvil", "anvil-host", "ubuntu", "~/arc", nil, false, true, false)
 
 		dest := cfg.Destinations["anvil"]
 		test.That(t, dest.SyncTo, test.ShouldEqual, "~/arc")
@@ -82,7 +82,7 @@ func TestBuildProjectConfig(t *testing.T) {
 	})
 
 	t.Run("round-trip with connectFromProject structs", func(t *testing.T) {
-		cfg := buildProjectConfig("myconn", "host", "user", "~/proj", []string{"make", "go"}, true, true)
+		cfg := buildProjectConfig("myconn", "host", "user", "~/proj", []string{"make", "go"}, true, true, false)
 
 		data, err := yaml.Marshal(cfg)
 		test.That(t, err, test.ShouldBeNil)

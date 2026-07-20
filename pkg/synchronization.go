@@ -88,6 +88,33 @@ const syncProtoNum = int(urlpkg.Protocol_Docker)
 type SynchronizationIntent struct {
 	FromLocal string
 	ToRemote  string
+	// SyncGit enables a secondary one-way replica of FromLocal's .git
+	// directory to the remote; see gitReplicaIntent.
+	SyncGit bool
+}
+
+// gitReplicaIntent derives the .git replica session's endpoints from a parent
+// intent. The distinct paths give the replica session a distinct
+// syncSessionName, so the parent and replica sessions never collide.
+func gitReplicaIntent(intent SynchronizationIntent) SynchronizationIntent {
+	return SynchronizationIntent{
+		FromLocal: filepath.Join(intent.FromLocal, gitDirName),
+		ToRemote:  intent.ToRemote + "/" + gitDirName,
+	}
+}
+
+// gitDirName is the name of git's metadata directory under a repository root.
+const gitDirName = ".git"
+
+// gitReplicaIgnores are the Mutagen-syntax ignore patterns for .git replica
+// sessions. Git's transient lock and temp files must never propagate: a
+// replicated index.lock would make remote git refuse to run until the next
+// flush removed it. Changing this list recreates existing replica sessions
+// via the ignore-drift check in EstablishSynchronization.
+var gitReplicaIgnores = []string{
+	"*.lock",
+	"objects/**/tmp_*",
+	"gc.pid",
 }
 
 // SynchronizationIntentFromConfig returns a SynchronizationIntent to be used internally from the config API.

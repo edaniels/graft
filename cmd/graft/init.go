@@ -16,6 +16,7 @@ var (
 	initWorkspace     bool
 	initName          string
 	initSync          bool
+	initSyncGit       bool
 	initForward       []string
 	initForwardPrefix bool
 	initForce         bool
@@ -98,7 +99,7 @@ func runInitProject(cmd *cobra.Command, args []string, localDir, rawDestination 
 		host = destination
 	}
 
-	cfg := buildProjectConfig(initName, host, user, remoteDir, initForward, initForwardPrefix, initSync)
+	cfg := buildProjectConfig(initName, host, user, remoteDir, initForward, initForwardPrefix, initSync, initSyncGit)
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -166,13 +167,14 @@ func buildWorkspaceConfig() WorkspaceConfig {
 	}
 }
 
-func buildProjectConfig(name, host, user, remoteDir string, forwards []string, prefix, sync bool) ProjectConfig {
+func buildProjectConfig(name, host, user, remoteDir string, forwards []string, prefix, sync, syncGit bool) ProjectConfig {
 	destConfig := ProjectDestinationConfig{
-		Host:   host,
-		User:   user,
-		SyncTo: remoteDir,
-		Prefix: prefix,
-		Sync:   sync,
+		Host:    host,
+		User:    user,
+		SyncTo:  remoteDir,
+		Prefix:  prefix,
+		Sync:    sync,
+		SyncGit: syncGit,
 	}
 
 	return ProjectConfig{
@@ -186,6 +188,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initWorkspace, "workspace", false, "Generate workspace config instead of project config")
 	initCmd.Flags().StringVarP(&initName, "name", "n", "", "Connection name (required for project mode)")
 	initCmd.Flags().BoolVar(&initSync, "sync", false, "Enable file synchronization")
+	initCmd.Flags().BoolVar(&initSyncGit, "sync-git", false, "Also replicate .git one-way (remote git is read-only)")
 	initCmd.Flags().StringSliceVar(&initForward, "forward", nil, "Commands to forward")
 	initCmd.Flags().BoolVar(&initForwardPrefix, "forward-prefix", false, "Prefix forwarded commands with connection name")
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Overwrite existing graft.yaml")

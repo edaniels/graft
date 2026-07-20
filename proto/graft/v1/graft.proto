@@ -365,6 +365,9 @@ message SyncFilesToConnectionRequest {
   string source_dir = 1;
   string dest_dir = 2;
   string to_connection_name = 3;
+  // Also replicate source_dir's .git directory to the remote one-way,
+  // giving the remote a read-only git view.
+  bool sync_git = 4;
 }
 
 message SyncFilesToConnectionResponse {}

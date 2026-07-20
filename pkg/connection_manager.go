@@ -511,25 +511,36 @@ func (mgr *ConnectionManager) RemoveForwardCommands(name string, commands []stri
 
 // Close ends our sessions with any existing connection and closes daemons.
 func (mgr *ConnectionManager) Close() {
+	// Snapshot under the lock, then close outside it. Closing a connection
+	// pauses its sync sessions, which blocks until each session's loop
+	// exits; a loop mid-reconnect resolves its connection through
+	// mgr.connection and needs connMgrMu, so holding the mutex across the
+	// pauses deadlocks shutdown.
 	mgr.connMgrMu.Lock()
-	defer mgr.connMgrMu.Unlock()
-
 	mgr.runCtxCancel()
 
+	conns := make([]*Connection, 0, len(mgr.connections))
 	for _, conn := range mgr.connections {
+		conns = append(conns, conn)
+	}
+
+	daemons := mgr.daemons
+	mgr.daemons = map[string]*remoteDaemon{}
+	rootsPath := mgr.connectionRootsPath
+	mgr.connMgrMu.Unlock()
+
+	for _, conn := range conns {
 		conn.Close()
 	}
 
-	for key, d := range mgr.daemons {
+	for _, d := range daemons {
 		if err := d.Close(); err != nil {
 			slog.Error("error closing daemon", "error", err)
 		}
-
-		delete(mgr.daemons, key)
 	}
 
-	if mgr.connectionRootsPath != "" {
-		os.Remove(mgr.connectionRootsPath)
+	if rootsPath != "" {
+		os.Remove(rootsPath)
 	}
 }
 

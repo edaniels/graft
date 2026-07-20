@@ -7,6 +7,7 @@ import (
 var (
 	syncTo      string
 	syncDestDir string
+	syncGit     bool
 )
 
 var syncCmd = &cobra.Command{
@@ -27,7 +28,7 @@ var syncCmd = &cobra.Command{
 			toConn = selectResp.GetConnectionName()
 		}
 
-		return client.Sync(ctx, parseSyncArgs(args), syncDestDir, toConn)
+		return client.Sync(ctx, parseSyncArgs(args), syncDestDir, toConn, syncGit)
 	},
 }
 
@@ -43,6 +44,7 @@ func init() {
 	syncCmd.Flags().StringVarP(&syncTo, "to", "t", "", "Target connection (detected from CWD if omitted)")
 	syncCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 	syncCmd.Flags().StringVar(&syncDestDir, "dest-dir", "", "Destination directory")
+	syncCmd.Flags().BoolVar(&syncGit, "git", false, "Also replicate the source's .git one-way (remote git is read-only)")
 
 	rootCmd.AddCommand(syncCmd)
 }

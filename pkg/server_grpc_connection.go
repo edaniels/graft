@@ -595,6 +595,7 @@ func (srv *Server) SyncFilesToConnection(
 	syncIntent := SynchronizationIntent{
 		FromLocal: req.GetSourceDir(),
 		ToRemote:  toRemote,
+		SyncGit:   req.GetSyncGit(),
 	}
 	if err := srv.connMgr.EstablishSynchronization(
 		ctx,

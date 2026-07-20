@@ -154,6 +154,9 @@ type ProjectDestinationConfig struct {
 	SyncTo string `yaml:"syncTo"`
 	Prefix bool   `yaml:"prefix"`
 	Sync   bool   `yaml:"sync"`
+	// SyncGit additionally replicates the project's .git directory one-way
+	// so the remote has a read-only git view.
+	SyncGit bool `yaml:"syncGit,omitempty"`
 }
 
 type ProjectConfig struct {

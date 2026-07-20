@@ -108,6 +108,9 @@ func (conf *RootConfig) cloneFrom(from *RootConfig) {
 type SynchronizationIntentConfig struct {
 	FromLocal string `yaml:"fromLocal"`
 	ToRemote  string `yaml:"toRemote"`
+	// SyncGit enables a secondary one-way replica of FromLocal's .git
+	// directory to the remote, giving the remote a read-only git view.
+	SyncGit bool `yaml:"syncGit,omitempty"`
 }
 
 // A ConnectionConfig is the configuration for a single connection, regardless of its type.

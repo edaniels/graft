@@ -1995,8 +1995,11 @@ type SyncFilesToConnectionRequest struct {
 	SourceDir        string                 `protobuf:"bytes,1,opt,name=source_dir,json=sourceDir,proto3" json:"source_dir,omitempty"`
 	DestDir          string                 `protobuf:"bytes,2,opt,name=dest_dir,json=destDir,proto3" json:"dest_dir,omitempty"`
 	ToConnectionName string                 `protobuf:"bytes,3,opt,name=to_connection_name,json=toConnectionName,proto3" json:"to_connection_name,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Also replicate source_dir's .git directory to the remote one-way,
+	// giving the remote a read-only git view.
+	SyncGit       bool `protobuf:"varint,4,opt,name=sync_git,json=syncGit,proto3" json:"sync_git,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SyncFilesToConnectionRequest) Reset() {
@@ -2048,6 +2051,13 @@ func (x *SyncFilesToConnectionRequest) GetToConnectionName() string {
 		return x.ToConnectionName
 	}
 	return ""
+}
+
+func (x *SyncFilesToConnectionRequest) GetSyncGit() bool {
+	if x != nil {
+		return x.SyncGit
+	}
+	return false
 }
 
 type SyncFilesToConnectionResponse struct {
@@ -4343,12 +4353,13 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"&RemoveConnectionForwardCommandsRequest\x12'\n" +
 	"\x0fconnection_name\x18\x01 \x01(\tR\x0econnectionName\x12\x1a\n" +
 	"\bcommands\x18\x02 \x03(\tR\bcommands\")\n" +
-	"'RemoveConnectionForwardCommandsResponse\"\x86\x01\n" +
+	"'RemoveConnectionForwardCommandsResponse\"\xa1\x01\n" +
 	"\x1cSyncFilesToConnectionRequest\x12\x1d\n" +
 	"\n" +
 	"source_dir\x18\x01 \x01(\tR\tsourceDir\x12\x19\n" +
 	"\bdest_dir\x18\x02 \x01(\tR\adestDir\x12,\n" +
-	"\x12to_connection_name\x18\x03 \x01(\tR\x10toConnectionName\"\x1f\n" +
+	"\x12to_connection_name\x18\x03 \x01(\tR\x10toConnectionName\x12\x19\n" +
+	"\bsync_git\x18\x04 \x01(\bR\asyncGit\"\x1f\n" +
 	"\x1dSyncFilesToConnectionResponse\":\n" +
 	"$SyncFilesToConnectionProtocolRequest\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\";\n" +

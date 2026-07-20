@@ -18,6 +18,7 @@ var (
 	connectForward       []string
 	connectForwardPrefix bool
 	connectSyncFlag      bool
+	connectSyncGitFlag   bool
 	connectOS            string
 	connectBackground    bool
 )
@@ -77,6 +78,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 			ForwardPrefix:   connectForwardPrefix,
 			PortForwards:    fwdPorts,
 			WithSync:        connectSyncFlag,
+			SyncGit:         connectSyncGitFlag,
 			Background:      connectBackground,
 		}
 
@@ -327,6 +329,8 @@ func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectPar
 		params.WithSync = true
 	}
 
+	params.SyncGit = in.destConfig.SyncGit
+
 	return params
 }
 
@@ -348,6 +352,7 @@ func init() {
 	connectCmd.Flags().StringSliceVar(&connectForward, "forward", nil, "Commands to forward")
 	connectCmd.Flags().BoolVar(&connectForwardPrefix, "forward-prefix", false, "Forward with connection name prefix")
 	connectCmd.Flags().BoolVar(&connectSyncFlag, "sync", false, "Enable file synchronization")
+	connectCmd.Flags().BoolVar(&connectSyncGitFlag, "sync-git", false, "Also replicate .git one-way (remote git is read-only)")
 	connectCmd.Flags().StringVar(&connectOS, "os", "", "Container OS (docker:// only)")
 	connectCmd.Flags().BoolVar(&connectBackground, "background", false, "Exclude from CWD-based auto-selection")
 

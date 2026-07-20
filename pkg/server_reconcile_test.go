@@ -53,6 +53,45 @@ func TestComputeMissingSyncs(t *testing.T) {
 		test.That(t, got[0].FromLocal, test.ShouldEqual, "/a")
 		test.That(t, got[0].ToRemote, test.ShouldEqual, "/A")
 	})
+
+	t.Run("active with different SyncGit flag is treated as missing", func(t *testing.T) {
+		desired := []SynchronizationIntentConfig{
+			{FromLocal: "/a", ToRemote: "/A", SyncGit: true},
+		}
+		active := []SynchronizationIntent{
+			{FromLocal: "/a", ToRemote: "/A"},
+		}
+
+		got := computeMissingSyncs(desired, active)
+		test.That(t, len(got), test.ShouldEqual, 1)
+		test.That(t, got[0].SyncGit, test.ShouldBeTrue)
+	})
+}
+
+func TestExpectedSyncSessionNames(t *testing.T) {
+	intent := SynchronizationIntentConfig{FromLocal: "/a", ToRemote: "/A"}
+	gitIntent := SynchronizationIntentConfig{FromLocal: "/b", ToRemote: "/B", SyncGit: true}
+
+	pending := []ConnectionConfig{{
+		Name:             "conn",
+		Synchronizations: []SynchronizationIntentConfig{intent, gitIntent},
+	}}
+
+	expected := expectedSyncSessionNames(pending)
+
+	t.Run("every synchronization contributes its session name", func(t *testing.T) {
+		test.That(t, expected[syncSessionName("conn", SynchronizationIntentFromConfig(intent))], test.ShouldBeTrue)
+		test.That(t, expected[syncSessionName("conn", SynchronizationIntentFromConfig(gitIntent))], test.ShouldBeTrue)
+	})
+
+	t.Run("git replica name included only when SyncGit is set", func(t *testing.T) {
+		gitName := syncSessionName("conn", gitReplicaIntent(SynchronizationIntentFromConfig(gitIntent)))
+		nonGitName := syncSessionName("conn", gitReplicaIntent(SynchronizationIntentFromConfig(intent)))
+
+		test.That(t, expected[gitName], test.ShouldBeTrue)
+		test.That(t, expected[nonGitName], test.ShouldBeFalse)
+		test.That(t, len(expected), test.ShouldEqual, 3)
+	})
 }
 
 func TestComputeMissingForwardCommands(t *testing.T) {

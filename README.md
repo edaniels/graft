@@ -106,6 +106,35 @@ graft shell              # opens a shell on labos, regardless of cwd
 graft use --clear        # resume CWD-based auto-selection
 ```
 
+## Syncing .git (read-only remote git)
+
+By default graft does not sync `.git`, so git commands on the remote fail with
+`fatal: not a git repository`. Opt in to a one-way replica of your local
+`.git` with:
+
+```bash
+graft sync --git             # or: graft connect --sync --sync-git
+```
+
+or `syncGit: true` on a synchronization in the daemon config (and
+`syncGit: true` on a destination in `graft.yaml`).
+
+The replica makes the remote's git **read-only**: `git status`, `log`,
+`diff`, `blame`, and `rev-parse` all work, but anything the remote writes to
+`.git` is reverted on the next flush. In particular:
+
+- Remote `git commit`/`branch`/`tag`/`fetch` appear to succeed, then
+  silently evaporate seconds later. Commit locally instead.
+- **Never run `git stash`, `git checkout <branch>`, or `git reset --hard` on
+  the remote.** Their working-tree changes flow back to your local machine
+  through the two-way file sync while the git metadata reverts; `git stash`
+  in particular reverts your edits on both sides and then loses the stash.
+- Git's transient files (`*.lock`, temp objects, `gc.pid`) are never
+  replicated, so a local `index.lock` can't wedge remote git.
+
+The initial sync transfers your entire `.git` (which can be large), and a
+local `git gc`/repack re-transfers the rewritten packfiles.
+
 ## Projects and workspaces
 
 Instead of passing flags to `graft connect` every time, you can save connection settings in a `graft.yaml` file.

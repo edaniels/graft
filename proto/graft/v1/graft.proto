@@ -371,6 +371,11 @@ message SyncFilesToConnectionRequest {
   // Also replicate source_dir's .git directory to the remote one-way,
   // giving the remote a read-only git view.
   bool sync_git = 4;
+  // Octal permission mode strings (e.g. "644") applied to files and
+  // directories the sync writes on the remote. Empty means graft's
+  // defaults: 644/755 for the working tree, 600/700 for the .git replica.
+  string default_file_mode = 5;
+  string default_directory_mode = 6;
 }
 
 message SyncFilesToConnectionResponse {}

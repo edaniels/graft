@@ -96,6 +96,29 @@ func (conf *RootConfig) Persist(toPath string) error {
 	return nil
 }
 
+// SyncModesFor returns the configured permission modes for the named
+// connection's synchronization from fromLocal, or empty strings when none
+// are recorded. Requests that carry no modes inherit these, so a bare graft
+// sync does not reset modes configured elsewhere.
+func (conf *RootConfig) SyncModesFor(connName, fromLocal string) (string, string) {
+	conf.configMu.Lock()
+	defer conf.configMu.Unlock()
+
+	for _, conn := range conf.Connections {
+		if conn.Name != connName {
+			continue
+		}
+
+		for _, syncConf := range conn.Synchronizations {
+			if syncConf.FromLocal == fromLocal {
+				return syncConf.DefaultFileMode, syncConf.DefaultDirectoryMode
+			}
+		}
+	}
+
+	return "", ""
+}
+
 // always update this when new top level fields are added.
 func (conf *RootConfig) cloneFrom(from *RootConfig) {
 	from.configMu.Lock()
@@ -111,6 +134,15 @@ type SynchronizationIntentConfig struct {
 	// SyncGit enables a secondary one-way replica of FromLocal's .git
 	// directory to the remote, giving the remote a read-only git view.
 	SyncGit bool `yaml:"syncGit,omitempty"`
+	// DefaultFileMode and DefaultDirectoryMode are octal permission mode
+	// strings (e.g. "644", "0644") applied to files and directories the sync
+	// creates or updates on the remote. Empty means graft's defaults: "644"
+	// for files and "755" for directories in the working tree, and mutagen's
+	// private 0600/0700 for the .git replica. File modes must not include
+	// executability bits; mutagen propagates the source's executable bit on
+	// top of the base mode.
+	DefaultFileMode      string `yaml:"defaultFileMode,omitempty"`
+	DefaultDirectoryMode string `yaml:"defaultDirectoryMode,omitempty"`
 }
 
 // A ConnectionConfig is the configuration for a single connection, regardless of its type.
@@ -170,6 +202,12 @@ func (conf *ConnectionConfig) Validate() error {
 		}
 
 		seenPrefixFwd[fwd] = true
+	}
+
+	for idx, syncConf := range conf.Synchronizations {
+		if err := validateSyncModes(syncConf.DefaultFileMode, syncConf.DefaultDirectoryMode); err != nil {
+			return errors.WrapPrefix(err, fmt.Sprintf("synchronization %d invalid", idx))
+		}
 	}
 
 	return nil

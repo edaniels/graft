@@ -330,6 +330,8 @@ func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectPar
 	}
 
 	params.SyncGit = in.destConfig.SyncGit
+	params.SyncDefaultFileMode = in.destConfig.DefaultFileMode
+	params.SyncDefaultDirectoryMode = in.destConfig.DefaultDirectoryMode
 
 	return params
 }

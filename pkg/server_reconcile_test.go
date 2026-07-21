@@ -66,6 +66,33 @@ func TestComputeMissingSyncs(t *testing.T) {
 		test.That(t, len(got), test.ShouldEqual, 1)
 		test.That(t, got[0].SyncGit, test.ShouldBeTrue)
 	})
+
+	t.Run("active with different explicit modes is treated as missing", func(t *testing.T) {
+		desired := []SynchronizationIntentConfig{
+			{FromLocal: "/a", ToRemote: "/A", DefaultFileMode: "600", DefaultDirectoryMode: "700"},
+		}
+		active := []SynchronizationIntent{
+			{FromLocal: "/a", ToRemote: "/A", DefaultFileMode: "644", DefaultDirectoryMode: "755"},
+		}
+
+		got := computeMissingSyncs(desired, active)
+		test.That(t, len(got), test.ShouldEqual, 1)
+		test.That(t, got[0].DefaultFileMode, test.ShouldEqual, "600")
+	})
+
+	t.Run("desired with empty modes matches active with explicit modes", func(t *testing.T) {
+		// Empty modes mean "no opinion": a bare graft sync against a sync
+		// whose modes were configured must not reset them.
+		desired := []SynchronizationIntentConfig{
+			{FromLocal: "/a", ToRemote: "/A"},
+		}
+		active := []SynchronizationIntent{
+			{FromLocal: "/a", ToRemote: "/A", DefaultFileMode: "640", DefaultDirectoryMode: "750"},
+		}
+
+		got := computeMissingSyncs(desired, active)
+		test.That(t, got, test.ShouldBeEmpty)
+	})
 }
 
 func TestExpectedSyncSessionNames(t *testing.T) {

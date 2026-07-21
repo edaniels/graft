@@ -604,10 +604,30 @@ func (srv *Server) SyncFilesToConnection(
 		toRemote = defaultSyncRemotePath(conn.HomeDir(), srv.identity, req.GetSourceDir())
 	}
 
+	if err := validateSyncModes(req.GetDefaultFileMode(), req.GetDefaultDirectoryMode()); err != nil {
+		return nil, err
+	}
+
+	// Empty request modes mean "no opinion": inherit any modes already
+	// configured for this sync so a bare graft sync does not reset them
+	// (e.g. right after a daemon restart, before reconcile has run).
+	fileMode, dirMode := req.GetDefaultFileMode(), req.GetDefaultDirectoryMode()
+	configFileMode, configDirMode := srv.rootConfig.SyncModesFor(req.GetToConnectionName(), req.GetSourceDir())
+
+	if fileMode == "" {
+		fileMode = configFileMode
+	}
+
+	if dirMode == "" {
+		dirMode = configDirMode
+	}
+
 	syncIntent := SynchronizationIntent{
-		FromLocal: req.GetSourceDir(),
-		ToRemote:  toRemote,
-		SyncGit:   req.GetSyncGit(),
+		FromLocal:            req.GetSourceDir(),
+		ToRemote:             toRemote,
+		SyncGit:              req.GetSyncGit(),
+		DefaultFileMode:      fileMode,
+		DefaultDirectoryMode: dirMode,
 	}
 	if err := srv.connMgr.EstablishSynchronization(
 		ctx,

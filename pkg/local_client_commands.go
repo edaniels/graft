@@ -371,6 +371,12 @@ type ConnectParams struct {
 	// one-way so the remote has a read-only git view.
 	SyncGit bool
 
+	// SyncDefaultFileMode/SyncDefaultDirectoryMode are octal permission mode
+	// strings (e.g. "644") applied to content the sync writes on the remote.
+	// Empty means graft's defaults.
+	SyncDefaultFileMode      string
+	SyncDefaultDirectoryMode string
+
 	// Background excludes this connection from CWD-based auto-selection.
 	Background bool
 }
@@ -460,7 +466,15 @@ func (client *LocalClient) postInitConnection(
 			syncDest = params.SyncDest
 		}
 
-		if syncErr := client.Sync(ctx, syncSource, syncDest, resolvedConnectionName, params.SyncGit); syncErr != nil {
+		syncParams := SyncParams{
+			SourceDir:            syncSource,
+			DestDir:              syncDest,
+			ToConnectionName:     resolvedConnectionName,
+			SyncGit:              params.SyncGit,
+			DefaultFileMode:      params.SyncDefaultFileMode,
+			DefaultDirectoryMode: params.SyncDefaultDirectoryMode,
+		}
+		if syncErr := client.Sync(ctx, syncParams); syncErr != nil {
 			return syncErr
 		}
 	}
@@ -491,19 +505,35 @@ func (client *LocalClient) printConnectSummary(name, localRoot, remoteRoot strin
 	}
 }
 
+// SyncParams bundles the parameters for setting up a file synchronization.
+type SyncParams struct {
+	SourceDir        string
+	DestDir          string
+	ToConnectionName string
+	// SyncGit additionally replicates the source's .git directory one-way so
+	// the remote has a read-only git view.
+	SyncGit bool
+	// DefaultFileMode/DefaultDirectoryMode are octal permission mode strings
+	// (e.g. "644") applied to content the sync writes on the remote. Empty
+	// means graft's defaults, or the sync's already-configured modes when it
+	// exists.
+	DefaultFileMode      string
+	DefaultDirectoryMode string
+}
+
 // Sync sets up bidi file sync between the source directory and a connection.
-// syncGit additionally replicates the source's .git directory one-way so the
-// remote has a read-only git view.
-func (client *LocalClient) Sync(ctx context.Context, sourceDir, destDir, toConnName string, syncGit bool) error {
-	if sourceDir == "" {
-		sourceDir = client.cwd
+func (client *LocalClient) Sync(ctx context.Context, params SyncParams) error {
+	if params.SourceDir == "" {
+		params.SourceDir = client.cwd
 	}
 
 	if _, err := client.SyncFilesToConnection(ctx, &graftv1.SyncFilesToConnectionRequest{
-		SourceDir:        sourceDir,
-		DestDir:          destDir,
-		ToConnectionName: toConnName,
-		SyncGit:          syncGit,
+		SourceDir:            params.SourceDir,
+		DestDir:              params.DestDir,
+		ToConnectionName:     params.ToConnectionName,
+		SyncGit:              params.SyncGit,
+		DefaultFileMode:      params.DefaultFileMode,
+		DefaultDirectoryMode: params.DefaultDirectoryMode,
 	}); err != nil {
 		return client.handleError(err)
 	}

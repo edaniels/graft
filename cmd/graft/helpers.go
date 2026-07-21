@@ -157,6 +157,12 @@ type ProjectDestinationConfig struct {
 	// SyncGit additionally replicates the project's .git directory one-way
 	// so the remote has a read-only git view.
 	SyncGit bool `yaml:"syncGit,omitempty"`
+	// DefaultFileMode and DefaultDirectoryMode are octal permission mode
+	// strings (e.g. "644") applied to files and directories the sync writes
+	// on the remote. Empty means graft's defaults: 644/755 for the working
+	// tree, private 600/700 for the .git replica.
+	DefaultFileMode      string `yaml:"defaultFileMode,omitempty"`
+	DefaultDirectoryMode string `yaml:"defaultDirectoryMode,omitempty"`
 }
 
 type ProjectConfig struct {

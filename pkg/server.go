@@ -543,7 +543,9 @@ func computeMissingSyncs(desired []SynchronizationIntentConfig, active []Synchro
 	for _, d := range desired {
 		intent := SynchronizationIntentFromConfig(d)
 		if existing, ok := activeByLocal[intent.FromLocal]; ok &&
-			existing.ToRemote == intent.ToRemote && existing.SyncGit == intent.SyncGit {
+			existing.ToRemote == intent.ToRemote && existing.SyncGit == intent.SyncGit &&
+			syncModesCompatible(existing.DefaultFileMode, existing.DefaultDirectoryMode,
+				intent.DefaultFileMode, intent.DefaultDirectoryMode) {
 			continue
 		}
 

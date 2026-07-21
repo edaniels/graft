@@ -47,6 +47,24 @@ type activeSync struct {
 	// disabled.
 	syncGit      bool
 	gitCloseFunc func()
+	// defaultFileMode/defaultDirectoryMode record the intent's explicit
+	// remote mode overrides ("" when graft's defaults apply); used to detect
+	// configuration changes that require recreating the sessions.
+	defaultFileMode      string
+	defaultDirectoryMode string
+}
+
+// inheritModesInto fills an intent's empty modes from the active sync's
+// recorded modes. Empty means "no opinion": a bare graft sync (or a .git
+// replica flip) must not reset modes configured elsewhere.
+func (s activeSync) inheritModesInto(intent *SynchronizationIntent) {
+	if intent.DefaultFileMode == "" {
+		intent.DefaultFileMode = s.defaultFileMode
+	}
+
+	if intent.DefaultDirectoryMode == "" {
+		intent.DefaultDirectoryMode = s.defaultDirectoryMode
+	}
 }
 
 // Connection is a lightweight per-connection wrapper around a shared remoteDaemon.
@@ -390,7 +408,13 @@ func (conn *Connection) Synchronizations() []SynchronizationIntent {
 
 	syncs := make([]SynchronizationIntent, 0, len(conn.synchronizations))
 	for from, to := range conn.synchronizations {
-		syncs = append(syncs, SynchronizationIntent{FromLocal: from, ToRemote: to.destination, SyncGit: to.syncGit})
+		syncs = append(syncs, SynchronizationIntent{
+			FromLocal:            from,
+			ToRemote:             to.destination,
+			SyncGit:              to.syncGit,
+			DefaultFileMode:      to.defaultFileMode,
+			DefaultDirectoryMode: to.defaultDirectoryMode,
+		})
 	}
 
 	return syncs
@@ -408,10 +432,16 @@ func (conn *Connection) EstablishSynchronization(
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
+	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
+		existing.inheritModesInto(&syncIntent)
+	}
+
 	// Fast path: when reconciling from config (which stores already-resolved paths),
 	// the intent matches an active sync exactly. Skip without doing any remote I/O.
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok &&
-		existing.destination == syncIntent.ToRemote && existing.syncGit == syncIntent.SyncGit {
+		existing.destination == syncIntent.ToRemote && existing.syncGit == syncIntent.SyncGit &&
+		syncModesCompatible(existing.defaultFileMode, existing.defaultDirectoryMode,
+			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) {
 		return nil
 	}
 
@@ -427,7 +457,15 @@ func (conn *Connection) EstablishSynchronization(
 	// Re-check after resolution: an unresolved intent (e.g., "~/foo") may now match
 	// an already-active resolved entry.
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
-		if existing.destination == syncIntent.ToRemote {
+		if existing.destination != syncIntent.ToRemote {
+			return errors.Errorf(
+				"synchronization for %q already exists with destination %q (cannot override to %q)",
+				syncIntent.FromLocal, existing.destination, syncIntent.ToRemote,
+			)
+		}
+
+		if syncModesCompatible(existing.defaultFileMode, existing.defaultDirectoryMode,
+			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) {
 			if existing.syncGit == syncIntent.SyncGit {
 				return nil
 			}
@@ -435,14 +473,23 @@ func (conn *Connection) EstablishSynchronization(
 			return conn.applyGitReplicaFlip(ctx, syncManager, syncIntent, existing)
 		}
 
-		return errors.Errorf(
-			"synchronization for %q already exists with destination %q (cannot override to %q)",
-			syncIntent.FromLocal, existing.destination, syncIntent.ToRemote,
-		)
+		// Explicit mode changes fall through: establishSession terminates the
+		// now-stale mutagen sessions and creates fresh ones, and the map
+		// entry is replaced below.
 	}
 
-	_, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, "mkdir -p "+syncIntent.ToRemote)
-	if mkdirErr != nil {
+	betaConfig, betaErr := syncBetaConfiguration(syncIntent)
+	if betaErr != nil {
+		return errors.WrapPrefix(betaErr, "invalid sync permission modes")
+	}
+
+	// The sync root is created by graft, not mutagen, so its mode must be
+	// pinned to the session's directory mode rather than inherited from the
+	// remote umask: a umask-derived 0700 root would block traversal into an
+	// otherwise world-readable tree.
+	mkdirCmd := makeSyncRootCommand(syncIntent.ToRemote, betaConfig.GetDefaultDirectoryMode())
+
+	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
 		return errors.WrapPrefix(mkdirErr, "error making directory for sync to remote path")
 	}
 
@@ -460,23 +507,40 @@ func (conn *Connection) EstablishSynchronization(
 			IgnoreVCSMode:       ignore.IgnoreVCSMode_IgnoreVCSModeIgnore,
 			Ignores:             ignores,
 		},
+		betaConfig,
 	)
 	if err != nil {
 		return err
 	}
 
-	var gitCloseFunc func()
-	if syncIntent.SyncGit {
-		if gitCloseFunc, err = conn.establishGitReplica(ctx, cc, syncManager, syncIntent); err != nil {
-			return err
-		}
+	// The mode-change fall-through can be replacing an entry whose replica is
+	// being dropped along with the mode change; pause it now rather than
+	// leaving it replicating until the orphan reaper's next tick.
+	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok &&
+		existing.gitCloseFunc != nil && !syncIntent.SyncGit {
+		existing.gitCloseFunc()
 	}
 
-	conn.synchronizations[syncIntent.FromLocal] = activeSync{
-		destination:  syncIntent.ToRemote,
-		closeFunc:    pauseSessionFunc(syncManager, sessionID),
-		syncGit:      syncIntent.SyncGit,
-		gitCloseFunc: gitCloseFunc,
+	// Record the primary session before attempting the replica so a replica
+	// failure cannot leave the entry pointing at a terminated prior session;
+	// the reconcile loop heals the missing replica via applyGitReplicaFlip.
+	entry := activeSync{
+		destination:          syncIntent.ToRemote,
+		closeFunc:            pauseSessionFunc(syncManager, sessionID),
+		defaultFileMode:      syncIntent.DefaultFileMode,
+		defaultDirectoryMode: syncIntent.DefaultDirectoryMode,
+	}
+	conn.synchronizations[syncIntent.FromLocal] = entry
+
+	if syncIntent.SyncGit {
+		gitCloseFunc, gitErr := conn.establishGitReplica(ctx, cc, syncManager, syncIntent)
+		if gitErr != nil {
+			return gitErr
+		}
+
+		entry.syncGit = true
+		entry.gitCloseFunc = gitCloseFunc
+		conn.synchronizations[syncIntent.FromLocal] = entry
 	}
 
 	return nil
@@ -541,7 +605,22 @@ func (conn *Connection) establishGitReplica(
 		return func() {}, nil //nolint:nilerr // a non-directory .git skips the replica by design
 	}
 
-	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, "mkdir -p "+gitIntent.ToRemote); mkdirErr != nil {
+	replicaBetaConfig, betaErr := gitReplicaBetaConfiguration(syncIntent)
+	if betaErr != nil {
+		return nil, errors.WrapPrefix(betaErr, "invalid sync permission modes")
+	}
+
+	// An unset replica directory mode means mutagen's private 0700 default;
+	// the graft-created replica root must match rather than inherit the
+	// remote umask.
+	replicaDirMode := replicaBetaConfig.GetDefaultDirectoryMode()
+	if replicaDirMode == 0 {
+		replicaDirMode = 0o700
+	}
+
+	mkdirCmd := makeSyncRootCommand(gitIntent.ToRemote, replicaDirMode)
+
+	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
 		return nil, errors.WrapPrefix(mkdirErr, "error making directory for git replica remote path")
 	}
 
@@ -556,6 +635,7 @@ func (conn *Connection) establishGitReplica(
 			IgnoreVCSMode: ignore.IgnoreVCSMode_IgnoreVCSModePropagate,
 			Ignores:       gitReplicaIgnores,
 		},
+		replicaBetaConfig,
 	)
 	if err != nil {
 		return nil, err
@@ -565,9 +645,9 @@ func (conn *Connection) establishGitReplica(
 }
 
 // establishSession resumes a paused session matching sessionName, or creates
-// a fresh one from alphaPath to betaPath with the given configuration.
-// Resuming keeps the ancestor archive, which is what stops locally-deleted
-// files from coming back on the next sync.
+// a fresh one from alphaPath to betaPath with the given session and beta
+// endpoint configurations. Resuming keeps the ancestor archive, which is what
+// stops locally-deleted files from coming back on the next sync.
 func (conn *Connection) establishSession(
 	ctx context.Context,
 	cc *grpc.ClientConn,
@@ -575,25 +655,27 @@ func (conn *Connection) establishSession(
 	sessionName string,
 	alphaPath, betaPath string,
 	config *synchronization.Configuration,
+	betaConfig *synchronization.Configuration,
 ) (string, error) {
-	existingID, existingPaused, existingIgnores, lookupErr := findExistingSessionByName(ctx, syncManager, sessionName)
+	existingID, existingPaused, existingConfig, existingBetaConfig, lookupErr := findExistingSessionByName(
+		ctx, syncManager, sessionName)
 	if lookupErr != nil {
 		return "", errors.WrapPrefix(lookupErr, "error looking up existing sync session")
 	}
 
-	// A session's ignores are fixed at creation (mutagen has no reconfigure
-	// API), so a session whose recorded ignores no longer match the desired
-	// set must be terminated and recreated. This discards the ancestor
-	// archive; remote files whose local counterparts were deleted may
-	// reappear locally on the next sync.
-	if existingID != "" && !slices.Equal(existingIgnores, config.GetIgnores()) {
-		slog.WarnContext(ctx, "ignore patterns changed; recreating sync session",
+	// A session's configuration is fixed at creation (mutagen has no
+	// reconfigure API), so a session whose recorded configuration no longer
+	// matches the desired one must be terminated and recreated. This discards
+	// the ancestor archive; remote files whose local counterparts were
+	// deleted may reappear locally on the next sync.
+	if existingID != "" && syncSessionConfigStale(existingConfig, existingBetaConfig, config, betaConfig) {
+		slog.WarnContext(ctx, "session configuration changed; recreating sync session",
 			"session_id", existingID, "name", sessionName)
 
 		if termErr := syncManager.Terminate(
 			ctx, &selection.Selection{Specifications: []string{existingID}}, "",
 		); termErr != nil {
-			return "", errors.WrapPrefix(termErr, "error terminating sync session with stale ignores")
+			return "", errors.WrapPrefix(termErr, "error terminating sync session with stale configuration")
 		}
 
 		existingID = ""
@@ -626,7 +708,7 @@ func (conn *Connection) establishSession(
 		},
 		config,
 		&synchronization.Configuration{},
-		&synchronization.Configuration{},
+		betaConfig,
 		sessionName,
 		nil,
 		false,

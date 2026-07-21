@@ -812,8 +812,11 @@ type SyncStatus struct {
 	Conflicts       []*SyncConflict        `protobuf:"bytes,6,rep,name=conflicts,proto3" json:"conflicts,omitempty"`
 	Problems        []*SyncProblem         `protobuf:"bytes,7,rep,name=problems,proto3" json:"problems,omitempty"`
 	StagingProgress *SyncStagingProgress   `protobuf:"bytes,8,opt,name=staging_progress,json=stagingProgress,proto3" json:"staging_progress,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// This entry is a one-way .git replica session attached to a
+	// synchronization, not a synchronization of its own.
+	GitReplica    bool `protobuf:"varint,9,opt,name=git_replica,json=gitReplica,proto3" json:"git_replica,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SyncStatus) Reset() {
@@ -900,6 +903,13 @@ func (x *SyncStatus) GetStagingProgress() *SyncStagingProgress {
 		return x.StagingProgress
 	}
 	return nil
+}
+
+func (x *SyncStatus) GetGitReplica() bool {
+	if x != nil {
+		return x.GitReplica
+	}
+	return false
 }
 
 type ConnectionStatus struct {
@@ -4257,7 +4267,7 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x0eremote_changes\x18\x03 \x03(\tR\rremoteChanges\"7\n" +
 	"\vSyncProblem\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xca\x02\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xeb\x02\n" +
 	"\n" +
 	"SyncStatus\x12\x1d\n" +
 	"\n" +
@@ -4269,7 +4279,9 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"last_error\x18\x05 \x01(\tR\tlastError\x124\n" +
 	"\tconflicts\x18\x06 \x03(\v2\x16.graft.v1.SyncConflictR\tconflicts\x121\n" +
 	"\bproblems\x18\a \x03(\v2\x15.graft.v1.SyncProblemR\bproblems\x12H\n" +
-	"\x10staging_progress\x18\b \x01(\v2\x1d.graft.v1.SyncStagingProgressR\x0fstagingProgress\"\xcd\x02\n" +
+	"\x10staging_progress\x18\b \x01(\v2\x1d.graft.v1.SyncStagingProgressR\x0fstagingProgress\x12\x1f\n" +
+	"\vgit_replica\x18\t \x01(\bR\n" +
+	"gitReplica\"\xcd\x02\n" +
 	"\x10ConnectionStatus\x12/\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x19.graft.v1.ConnectionStateR\x05state\x12&\n" +
 	"\fstate_reason\x18\x02 \x01(\tH\x00R\vstateReason\x88\x01\x01\x12\x18\n" +

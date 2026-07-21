@@ -73,6 +73,18 @@ func (srv *Server) ListConnections(
 				FromLocal: syncIntent.FromLocal,
 				ToRemote:  syncIntent.ToRemote,
 			})
+
+			// The .git replica is a separate session with its own state;
+			// report it alongside its parent so staging progress and errors
+			// are visible.
+			if syncIntent.SyncGit {
+				gitIntent := gitReplicaIntent(syncIntent)
+				status.SyncStatuses = append(status.SyncStatuses, &graftv1.SyncStatus{
+					FromLocal:  gitIntent.FromLocal,
+					ToRemote:   gitIntent.ToRemote,
+					GitReplica: true,
+				})
+			}
 		}
 
 		status.PortForwardStatuses = d.PortForwardStatuses()

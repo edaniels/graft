@@ -51,6 +51,20 @@ func TestResolveProjectConnectParams(t *testing.T) {
 		test.That(t, params.ForwardPrefix, test.ShouldBeFalse)
 	})
 
+	t.Run("sync permission modes carry through", func(t *testing.T) {
+		params := resolveProjectConnectParams(resolveProjectConnectInput{
+			projectDir: "/home/user/myproject",
+			destName:   "myconn",
+			destConfig: ProjectDestinationConfig{
+				Host: "myhost", User: "ubuntu", SyncTo: "~/proj", Sync: true,
+				DefaultFileMode: "640", DefaultDirectoryMode: "750",
+			},
+		})
+
+		test.That(t, params.SyncDefaultFileMode, test.ShouldEqual, "640")
+		test.That(t, params.SyncDefaultDirectoryMode, test.ShouldEqual, "750")
+	})
+
 	t.Run("with workspace sync", func(t *testing.T) {
 		params := resolveProjectConnectParams(resolveProjectConnectInput{
 			projectDir:    "/home/user/arc/infra/anvil/cluster",

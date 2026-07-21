@@ -5,13 +5,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/mutagen-io/mutagen/pkg/filesystem"
 	"github.com/mutagen-io/mutagen/pkg/logging"
 	"github.com/mutagen-io/mutagen/pkg/selection"
 	"github.com/mutagen-io/mutagen/pkg/synchronization"
+	"github.com/mutagen-io/mutagen/pkg/synchronization/core"
 	"github.com/mutagen-io/mutagen/pkg/synchronization/endpoint/remote"
 	urlpkg "github.com/mutagen-io/mutagen/pkg/url"
 	"google.golang.org/grpc"
@@ -43,26 +48,175 @@ func syncSessionName(connName string, intent SynchronizationIntent) string {
 }
 
 // findExistingSessionByName scans loaded sessions for a Name match, returning
-// the session's identifier, paused state, and the ignore patterns it was
-// created with. Returns ("", false, nil, nil) when not found.
+// the session's identifier, paused state, and the session and beta endpoint
+// configurations it was created with. Returns ("", false, nil, nil) when
+// not found.
 func findExistingSessionByName(
 	ctx context.Context,
 	mgr *synchronization.Manager,
 	name string,
-) (string, bool, []string, error) {
+) (string, bool, *synchronization.Configuration, *synchronization.Configuration, error) {
 	_, states, err := mgr.List(ctx, &selection.Selection{All: true}, 0)
 	if err != nil {
-		return "", false, nil, errors.Wrap(err)
+		return "", false, nil, nil, errors.Wrap(err)
 	}
 
 	for _, state := range states {
 		sess := state.GetSession()
 		if sess.GetName() == name {
-			return sess.GetIdentifier(), sess.GetPaused(), sess.GetConfiguration().GetIgnores(), nil
+			return sess.GetIdentifier(), sess.GetPaused(),
+				sess.GetConfiguration(), sess.GetConfigurationBeta(), nil
 		}
 	}
 
-	return "", false, nil, nil
+	return "", false, nil, nil, nil
+}
+
+// syncSessionConfigStale reports whether an existing session's recorded
+// configurations diverge from the desired ones in any field graft manages.
+// Mutagen sessions can't be reconfigured after creation, so a stale session
+// must be terminated and recreated for the desired configuration to apply.
+func syncSessionConfigStale(existingMain, existingBeta, desiredMain, desiredBeta *synchronization.Configuration) bool {
+	return !slices.Equal(existingMain.GetIgnores(), desiredMain.GetIgnores()) ||
+		existingBeta.GetDefaultFileMode() != desiredBeta.GetDefaultFileMode() ||
+		existingBeta.GetDefaultDirectoryMode() != desiredBeta.GetDefaultDirectoryMode()
+}
+
+// Remote files and directories in a synced working tree are created with
+// these modes instead of mutagen's portable-mode defaults (0600/0700), which
+// break remote consumers running as other users, e.g. non-root container
+// users reading docker bind mounts of a synced tree. They apply to the beta
+// (remote) endpoint only; content the sync creates locally keeps mutagen's
+// private defaults. Mutagen propagates the source's executable bit on top of
+// the file base, so executable files land 0755. Per-file source modes are not
+// otherwise mirrored (mutagen doesn't track them): locally-private 0600 files
+// land at the tree's file mode like everything else.
+const (
+	syncDefaultFileMode      = filesystem.Mode(0o644)
+	syncDefaultDirectoryMode = filesystem.Mode(0o755)
+)
+
+// parseSyncMode parses a user-facing octal permission mode string ("644",
+// "0644", "0o644").
+func parseSyncMode(s string) (filesystem.Mode, error) {
+	if s == "" {
+		return 0, errors.New("empty permission mode")
+	}
+
+	digits := strings.TrimPrefix(strings.TrimPrefix(s, "0o"), "0O")
+
+	parsed, err := strconv.ParseUint(digits, 8, 32)
+	if err != nil {
+		return 0, errors.WrapPrefix(err, fmt.Sprintf("invalid octal permission mode %q", s))
+	}
+
+	return filesystem.Mode(parsed), nil
+}
+
+// validateSyncModes checks an intent's octal mode strings. Empty strings are
+// valid and mean "use defaults". File modes must not carry executability
+// bits; mutagen owns those (propagated from the source).
+func validateSyncModes(fileMode, dirMode string) error {
+	if fileMode != "" {
+		parsed, err := parseSyncMode(fileMode)
+		if err != nil {
+			return errors.WrapPrefix(err, "defaultFileMode")
+		}
+
+		if err := core.EnsureDefaultFileModeValid(core.PermissionsMode_PermissionsModePortable, parsed); err != nil {
+			return errors.WrapPrefix(err, "defaultFileMode")
+		}
+	}
+
+	if dirMode != "" {
+		parsed, err := parseSyncMode(dirMode)
+		if err != nil {
+			return errors.WrapPrefix(err, "defaultDirectoryMode")
+		}
+
+		if err := core.EnsureDefaultDirectoryModeValid(core.PermissionsMode_PermissionsModePortable, parsed); err != nil {
+			return errors.WrapPrefix(err, "defaultDirectoryMode")
+		}
+	}
+
+	return nil
+}
+
+// syncModesCompatible reports whether a desired intent's modes are satisfied
+// by an active sync's modes. Empty desired modes mean "no opinion", so a bare
+// graft sync does not reset modes configured elsewhere.
+func syncModesCompatible(existingFileMode, existingDirMode, desiredFileMode, desiredDirMode string) bool {
+	return (desiredFileMode == "" || desiredFileMode == existingFileMode) &&
+		(desiredDirMode == "" || desiredDirMode == existingDirMode)
+}
+
+// syncModesConfiguration builds a beta endpoint configuration from an
+// intent's explicit modes, falling back to the given defaults when unset
+// (zero defaults leave the field unset, deferring to mutagen's own).
+func syncModesConfiguration(
+	intent SynchronizationIntent,
+	defaultFile, defaultDir filesystem.Mode,
+) (*synchronization.Configuration, error) {
+	cfg := &synchronization.Configuration{
+		DefaultFileMode:      uint32(defaultFile),
+		DefaultDirectoryMode: uint32(defaultDir),
+	}
+
+	if intent.DefaultFileMode != "" {
+		mode, err := parseSyncMode(intent.DefaultFileMode)
+		if err != nil {
+			return nil, errors.WrapPrefix(err, "defaultFileMode")
+		}
+
+		if err := core.EnsureDefaultFileModeValid(core.PermissionsMode_PermissionsModePortable, mode); err != nil {
+			return nil, errors.WrapPrefix(err, "defaultFileMode")
+		}
+
+		cfg.DefaultFileMode = uint32(mode)
+	}
+
+	if intent.DefaultDirectoryMode != "" {
+		mode, err := parseSyncMode(intent.DefaultDirectoryMode)
+		if err != nil {
+			return nil, errors.WrapPrefix(err, "defaultDirectoryMode")
+		}
+
+		if err := core.EnsureDefaultDirectoryModeValid(core.PermissionsMode_PermissionsModePortable, mode); err != nil {
+			return nil, errors.WrapPrefix(err, "defaultDirectoryMode")
+		}
+
+		cfg.DefaultDirectoryMode = uint32(mode)
+	}
+
+	return cfg, nil
+}
+
+// makeSyncRootCommand returns the shell command that ensures a sync root
+// exists on the remote, pinning roots graft creates to the session's
+// directory mode rather than the remote umask. Pre-existing roots are left
+// untouched: they may deliberately carry other modes (a 0700 home directory,
+// a setgid shared tree) or be owned by another user, where a chmod would
+// fail the whole establishment. The chmod applies only to the root itself;
+// intermediate directories mkdir -p creates keep the remote umask.
+func makeSyncRootCommand(remotePath string, dirMode uint32) string {
+	return fmt.Sprintf("test -d %[1]s || (mkdir -p %[1]s && chmod %[2]o %[1]s)", remotePath, dirMode)
+}
+
+// syncBetaConfiguration returns the beta (remote) endpoint configuration for
+// a working-tree session: world-readable 0644/0755 unless the intent says
+// otherwise.
+func syncBetaConfiguration(intent SynchronizationIntent) (*synchronization.Configuration, error) {
+	return syncModesConfiguration(intent, syncDefaultFileMode, syncDefaultDirectoryMode)
+}
+
+// gitReplicaBetaConfiguration returns the beta endpoint configuration for a
+// .git replica session. Unlike the working tree, the replica defaults to
+// mutagen's private 0600/0700: .git contents (credentials embedded in
+// .git/config, full history in objects) are only needed by the remote user's
+// own git commands, which run as the file owner. Explicit intent modes still
+// apply, for the rare remote consumer that must read .git.
+func gitReplicaBetaConfiguration(intent SynchronizationIntent) (*synchronization.Configuration, error) {
+	return syncModesConfiguration(intent, 0, 0)
 }
 
 // isGraftSyncName reports whether a mutagen session name was created by graft.
@@ -91,6 +245,11 @@ type SynchronizationIntent struct {
 	// SyncGit enables a secondary one-way replica of FromLocal's .git
 	// directory to the remote; see gitReplicaIntent.
 	SyncGit bool
+	// DefaultFileMode and DefaultDirectoryMode are octal permission mode
+	// strings for content the sync writes on the remote; see
+	// [SynchronizationIntentConfig] for semantics. Empty means defaults.
+	DefaultFileMode      string
+	DefaultDirectoryMode string
 }
 
 // gitReplicaIntent derives the .git replica session's endpoints from a parent

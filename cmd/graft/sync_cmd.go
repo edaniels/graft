@@ -2,6 +2,8 @@ package main
 
 import (
 	"github.com/spf13/cobra"
+
+	graft "github.com/edaniels/graft/pkg"
 )
 
 var (
@@ -28,7 +30,12 @@ var syncCmd = &cobra.Command{
 			toConn = selectResp.GetConnectionName()
 		}
 
-		return client.Sync(ctx, parseSyncArgs(args), syncDestDir, toConn, syncGit)
+		return client.Sync(ctx, graft.SyncParams{
+			SourceDir:        parseSyncArgs(args),
+			DestDir:          syncDestDir,
+			ToConnectionName: toConn,
+			SyncGit:          syncGit,
+		})
 	},
 }
 

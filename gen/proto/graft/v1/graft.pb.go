@@ -2007,9 +2007,14 @@ type SyncFilesToConnectionRequest struct {
 	ToConnectionName string                 `protobuf:"bytes,3,opt,name=to_connection_name,json=toConnectionName,proto3" json:"to_connection_name,omitempty"`
 	// Also replicate source_dir's .git directory to the remote one-way,
 	// giving the remote a read-only git view.
-	SyncGit       bool `protobuf:"varint,4,opt,name=sync_git,json=syncGit,proto3" json:"sync_git,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SyncGit bool `protobuf:"varint,4,opt,name=sync_git,json=syncGit,proto3" json:"sync_git,omitempty"`
+	// Octal permission mode strings (e.g. "644") applied to files and
+	// directories the sync writes on the remote. Empty means graft's
+	// defaults: 644/755 for the working tree, 600/700 for the .git replica.
+	DefaultFileMode      string `protobuf:"bytes,5,opt,name=default_file_mode,json=defaultFileMode,proto3" json:"default_file_mode,omitempty"`
+	DefaultDirectoryMode string `protobuf:"bytes,6,opt,name=default_directory_mode,json=defaultDirectoryMode,proto3" json:"default_directory_mode,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SyncFilesToConnectionRequest) Reset() {
@@ -2068,6 +2073,20 @@ func (x *SyncFilesToConnectionRequest) GetSyncGit() bool {
 		return x.SyncGit
 	}
 	return false
+}
+
+func (x *SyncFilesToConnectionRequest) GetDefaultFileMode() string {
+	if x != nil {
+		return x.DefaultFileMode
+	}
+	return ""
+}
+
+func (x *SyncFilesToConnectionRequest) GetDefaultDirectoryMode() string {
+	if x != nil {
+		return x.DefaultDirectoryMode
+	}
+	return ""
 }
 
 type SyncFilesToConnectionResponse struct {
@@ -4365,13 +4384,15 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"&RemoveConnectionForwardCommandsRequest\x12'\n" +
 	"\x0fconnection_name\x18\x01 \x01(\tR\x0econnectionName\x12\x1a\n" +
 	"\bcommands\x18\x02 \x03(\tR\bcommands\")\n" +
-	"'RemoveConnectionForwardCommandsResponse\"\xa1\x01\n" +
+	"'RemoveConnectionForwardCommandsResponse\"\x83\x02\n" +
 	"\x1cSyncFilesToConnectionRequest\x12\x1d\n" +
 	"\n" +
 	"source_dir\x18\x01 \x01(\tR\tsourceDir\x12\x19\n" +
 	"\bdest_dir\x18\x02 \x01(\tR\adestDir\x12,\n" +
 	"\x12to_connection_name\x18\x03 \x01(\tR\x10toConnectionName\x12\x19\n" +
-	"\bsync_git\x18\x04 \x01(\bR\asyncGit\"\x1f\n" +
+	"\bsync_git\x18\x04 \x01(\bR\asyncGit\x12*\n" +
+	"\x11default_file_mode\x18\x05 \x01(\tR\x0fdefaultFileMode\x124\n" +
+	"\x16default_directory_mode\x18\x06 \x01(\tR\x14defaultDirectoryMode\"\x1f\n" +
 	"\x1dSyncFilesToConnectionResponse\":\n" +
 	"$SyncFilesToConnectionProtocolRequest\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\";\n" +

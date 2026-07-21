@@ -108,7 +108,11 @@ func (client *LocalClient) GetStatus(ctx context.Context) (string, error) {
 		}
 
 		for _, syncStatus := range status.GetSyncStatuses() {
-			fmt.Fprintf(&buf, "\n  Synchronizing %s -> %s", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
+			if syncStatus.GetGitReplica() {
+				fmt.Fprintf(&buf, "\n  Replicating %s -> %s (read-only git)", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
+			} else {
+				fmt.Fprintf(&buf, "\n  Synchronizing %s -> %s", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
+			}
 
 			indented := strings.ReplaceAll(formatSyncStatusDescription(syncStatus), "\n", "\n    ")
 			fmt.Fprintf(&buf, "\n    %s", indented)

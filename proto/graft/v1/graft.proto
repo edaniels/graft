@@ -257,6 +257,9 @@ message SyncStatus {
   repeated SyncConflict conflicts = 6;
   repeated SyncProblem problems = 7;
   SyncStagingProgress staging_progress = 8;
+  // This entry is a one-way .git replica session attached to a
+  // synchronization, not a synchronization of its own.
+  bool git_replica = 9;
 }
 
 message ConnectionStatus {

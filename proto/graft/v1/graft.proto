@@ -260,6 +260,10 @@ message SyncStatus {
   // This entry is a one-way .git replica session attached to a
   // synchronization, not a synchronization of its own.
   bool git_replica = 9;
+  // syncInclude override patterns active for this synchronization: files that
+  // sync even though .gitignore excludes them. Empty for most syncs and for
+  // .git replicas.
+  repeated string sync_include = 10;
 }
 
 message ConnectionStatus {
@@ -376,9 +380,18 @@ message SyncFilesToConnectionRequest {
   // defaults: 644/755 for the working tree, 600/700 for the .git replica.
   string default_file_mode = 5;
   string default_directory_mode = 6;
+  // Gitignore-style patterns for content that must sync even though
+  // .gitignore excludes it (e.g. generated protobufs): gitignored for git,
+  // still synced by graft. Applied as "!" negations over the derived ignores.
+  repeated string sync_include = 7;
 }
 
-message SyncFilesToConnectionResponse {}
+message SyncFilesToConnectionResponse {
+  // Human-readable warnings about the synchronization the CLI should surface
+  // to the user, e.g. a syncInclude pattern that is shadowed by a
+  // directory-level ignore and so will not take effect.
+  repeated string warnings = 1;
+}
 
 message SyncFilesToConnectionProtocolRequest {
   bytes data = 1;

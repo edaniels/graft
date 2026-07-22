@@ -70,8 +70,9 @@ func (srv *Server) ListConnections(
 
 		for _, syncIntent := range conn.Synchronizations() {
 			status.SyncStatuses = append(status.SyncStatuses, &graftv1.SyncStatus{
-				FromLocal: syncIntent.FromLocal,
-				ToRemote:  syncIntent.ToRemote,
+				FromLocal:   syncIntent.FromLocal,
+				ToRemote:    syncIntent.ToRemote,
+				SyncInclude: syncIntent.SyncInclude,
 			})
 
 			// The .git replica is a separate session with its own state;
@@ -622,27 +623,58 @@ func (srv *Server) SyncFilesToConnection(
 		dirMode = configDirMode
 	}
 
+	// Empty request includes mean "no opinion": inherit any configured for this
+	// sync so a bare graft sync does not drop them (e.g. right after a daemon
+	// restart, before reconcile has established the active entry). Mirrors the
+	// mode inheritance above.
+	syncInclude := req.GetSyncInclude()
+	if len(syncInclude) == 0 {
+		syncInclude = srv.rootConfig.SyncIncludesFor(req.GetToConnectionName(), req.GetSourceDir())
+	}
+
 	syncIntent := SynchronizationIntent{
 		FromLocal:            req.GetSourceDir(),
 		ToRemote:             toRemote,
 		SyncGit:              req.GetSyncGit(),
+		SyncInclude:          syncInclude,
 		DefaultFileMode:      fileMode,
 		DefaultDirectoryMode: dirMode,
 	}
-	if err := srv.connMgr.EstablishSynchronization(
+
+	shadowed, syncErr := srv.connMgr.EstablishSynchronization(
 		ctx,
 		req.GetToConnectionName(),
 		syncIntent,
 		srv.synchronizationManager,
-	); err != nil {
-		return nil, err
+	)
+	if syncErr != nil {
+		return nil, syncErr
 	}
 
 	if err := srv.UpdateSynchronizations(req.GetToConnectionName()); err != nil {
 		return nil, err
 	}
 
-	return &graftv1.SyncFilesToConnectionResponse{}, nil
+	return &graftv1.SyncFilesToConnectionResponse{Warnings: shadowedIncludeWarnings(shadowed)}, nil
+}
+
+// shadowedIncludeWarnings turns shadowed syncInclude patterns into
+// user-facing warning strings surfaced by the CLI. Returns nil when there are
+// none.
+func shadowedIncludeWarnings(shadowed []string) []string {
+	if len(shadowed) == 0 {
+		return nil
+	}
+
+	warnings := make([]string, 0, len(shadowed))
+	for _, pattern := range shadowed {
+		warnings = append(warnings, fmt.Sprintf(
+			"syncInclude pattern %q is shadowed by a directory-level ignore and will not sync; "+
+				"ignore the directory's contents (e.g. \"dir/**\") instead of the directory itself",
+			pattern))
+	}
+
+	return warnings
 }
 
 // defaultSyncRemotePath computes a unique default remote sync directory when the user

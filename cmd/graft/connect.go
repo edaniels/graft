@@ -19,6 +19,7 @@ var (
 	connectForwardPrefix bool
 	connectSyncFlag      bool
 	connectSyncGitFlag   bool
+	connectSyncInclude   []string
 	connectOS            string
 	connectBackground    bool
 )
@@ -79,6 +80,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 			PortForwards:    fwdPorts,
 			WithSync:        connectSyncFlag,
 			SyncGit:         connectSyncGitFlag,
+			SyncInclude:     connectSyncInclude,
 			Background:      connectBackground,
 		}
 
@@ -330,6 +332,7 @@ func resolveProjectConnectParams(in resolveProjectConnectInput) graft.ConnectPar
 	}
 
 	params.SyncGit = in.destConfig.SyncGit
+	params.SyncInclude = in.destConfig.SyncInclude
 	params.SyncDefaultFileMode = in.destConfig.DefaultFileMode
 	params.SyncDefaultDirectoryMode = in.destConfig.DefaultDirectoryMode
 
@@ -355,6 +358,10 @@ func init() {
 	connectCmd.Flags().BoolVar(&connectForwardPrefix, "forward-prefix", false, "Forward with connection name prefix")
 	connectCmd.Flags().BoolVar(&connectSyncFlag, "sync", false, "Enable file synchronization")
 	connectCmd.Flags().BoolVar(&connectSyncGitFlag, "sync-git", false, "Also replicate .git one-way (remote git is read-only)")
+	// StringArray (not StringSlice) so brace patterns like '**/*.{pb.go,pb2.py}'
+	// are not split on their commas.
+	connectCmd.Flags().StringArrayVar(&connectSyncInclude, "sync-include-ignored", nil,
+		"Gitignore-style pattern synced bidirectionally even though .gitignore excludes it (repeatable, e.g. '**/*_pb2.py')")
 	connectCmd.Flags().StringVar(&connectOS, "os", "", "Container OS (docker:// only)")
 	connectCmd.Flags().BoolVar(&connectBackground, "background", false, "Exclude from CWD-based auto-selection")
 

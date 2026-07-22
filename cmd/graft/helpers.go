@@ -157,6 +157,10 @@ type ProjectDestinationConfig struct {
 	// SyncGit additionally replicates the project's .git directory one-way
 	// so the remote has a read-only git view.
 	SyncGit bool `yaml:"syncGit,omitempty"`
+	// SyncInclude are gitignore-style patterns for content that must sync even
+	// though .gitignore excludes it (e.g. generated protobufs): gitignored for
+	// git, still synced by graft.
+	SyncInclude []string `yaml:"syncInclude,omitempty"`
 	// DefaultFileMode and DefaultDirectoryMode are octal permission mode
 	// strings (e.g. "644") applied to files and directories the sync writes
 	// on the remote. Empty means graft's defaults: 644/755 for the working

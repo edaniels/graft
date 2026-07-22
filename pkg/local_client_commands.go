@@ -112,6 +112,10 @@ func (client *LocalClient) GetStatus(ctx context.Context) (string, error) {
 				fmt.Fprintf(&buf, "\n  Replicating %s -> %s (read-only git)", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
 			} else {
 				fmt.Fprintf(&buf, "\n  Synchronizing %s -> %s", syncStatus.GetFromLocal(), syncStatus.GetToRemote())
+
+				if includes := syncStatus.GetSyncInclude(); len(includes) != 0 {
+					fmt.Fprintf(&buf, " (including: %s)", strings.Join(includes, ", "))
+				}
 			}
 
 			indented := strings.ReplaceAll(formatSyncStatusDescription(syncStatus), "\n", "\n    ")
@@ -371,6 +375,10 @@ type ConnectParams struct {
 	// one-way so the remote has a read-only git view.
 	SyncGit bool
 
+	// SyncInclude are gitignore-style patterns for content that must sync even
+	// though .gitignore excludes it (e.g. generated protobufs).
+	SyncInclude []string
+
 	// SyncDefaultFileMode/SyncDefaultDirectoryMode are octal permission mode
 	// strings (e.g. "644") applied to content the sync writes on the remote.
 	// Empty means graft's defaults.
@@ -471,6 +479,7 @@ func (client *LocalClient) postInitConnection(
 			DestDir:              syncDest,
 			ToConnectionName:     resolvedConnectionName,
 			SyncGit:              params.SyncGit,
+			SyncInclude:          params.SyncInclude,
 			DefaultFileMode:      params.SyncDefaultFileMode,
 			DefaultDirectoryMode: params.SyncDefaultDirectoryMode,
 		}
@@ -513,6 +522,9 @@ type SyncParams struct {
 	// SyncGit additionally replicates the source's .git directory one-way so
 	// the remote has a read-only git view.
 	SyncGit bool
+	// SyncInclude are gitignore-style patterns for content that must sync even
+	// though .gitignore excludes it (e.g. generated protobufs).
+	SyncInclude []string
 	// DefaultFileMode/DefaultDirectoryMode are octal permission mode strings
 	// (e.g. "644") applied to content the sync writes on the remote. Empty
 	// means graft's defaults, or the sync's already-configured modes when it
@@ -527,15 +539,21 @@ func (client *LocalClient) Sync(ctx context.Context, params SyncParams) error {
 		params.SourceDir = client.cwd
 	}
 
-	if _, err := client.SyncFilesToConnection(ctx, &graftv1.SyncFilesToConnectionRequest{
+	resp, err := client.SyncFilesToConnection(ctx, &graftv1.SyncFilesToConnectionRequest{
 		SourceDir:            params.SourceDir,
 		DestDir:              params.DestDir,
 		ToConnectionName:     params.ToConnectionName,
 		SyncGit:              params.SyncGit,
+		SyncInclude:          params.SyncInclude,
 		DefaultFileMode:      params.DefaultFileMode,
 		DefaultDirectoryMode: params.DefaultDirectoryMode,
-	}); err != nil {
+	})
+	if err != nil {
 		return client.handleError(err)
+	}
+
+	for _, warning := range resp.GetWarnings() {
+		fmt.Fprintf(client.errWriter, "warning: %s\n", warning)
 	}
 
 	return nil

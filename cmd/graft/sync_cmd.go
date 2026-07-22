@@ -10,6 +10,7 @@ var (
 	syncTo      string
 	syncDestDir string
 	syncGit     bool
+	syncInclude []string
 )
 
 var syncCmd = &cobra.Command{
@@ -35,6 +36,7 @@ var syncCmd = &cobra.Command{
 			DestDir:          syncDestDir,
 			ToConnectionName: toConn,
 			SyncGit:          syncGit,
+			SyncInclude:      syncInclude,
 		})
 	},
 }
@@ -52,6 +54,10 @@ func init() {
 	syncCmd.RegisterFlagCompletionFunc("to", completeConnectionNames) //nolint:errcheck
 	syncCmd.Flags().StringVar(&syncDestDir, "dest-dir", "", "Destination directory")
 	syncCmd.Flags().BoolVar(&syncGit, "git", false, "Also replicate the source's .git one-way (remote git is read-only)")
+	// StringArray (not StringSlice) so brace patterns like '**/*.{pb.go,pb2.py}'
+	// are not split on their commas.
+	syncCmd.Flags().StringArrayVar(&syncInclude, "include-ignored", nil,
+		"Gitignore-style pattern synced bidirectionally even though .gitignore excludes it (repeatable, e.g. '**/*_pb2.py')")
 
 	rootCmd.AddCommand(syncCmd)
 }

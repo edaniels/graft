@@ -677,17 +677,18 @@ func (mgr *ConnectionManager) EstablishSynchronization(
 	name string,
 	syncIntent SynchronizationIntent,
 	syncManager *synchronization.Manager,
-) error {
+) ([]string, error) {
 	conn, err := mgr.Connection(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if err := conn.EstablishSynchronization(ctx, syncIntent, syncManager); err != nil {
-		return errors.Wrap(err)
+	shadowed, err := conn.EstablishSynchronization(ctx, syncIntent, syncManager)
+	if err != nil {
+		return nil, errors.Wrap(err)
 	}
 
-	return nil
+	return shadowed, nil
 }
 
 // Remove removes the named connection. Depending on the scheme, the daemon may be destroyed as well.

@@ -814,7 +814,11 @@ type SyncStatus struct {
 	StagingProgress *SyncStagingProgress   `protobuf:"bytes,8,opt,name=staging_progress,json=stagingProgress,proto3" json:"staging_progress,omitempty"`
 	// This entry is a one-way .git replica session attached to a
 	// synchronization, not a synchronization of its own.
-	GitReplica    bool `protobuf:"varint,9,opt,name=git_replica,json=gitReplica,proto3" json:"git_replica,omitempty"`
+	GitReplica bool `protobuf:"varint,9,opt,name=git_replica,json=gitReplica,proto3" json:"git_replica,omitempty"`
+	// syncInclude override patterns active for this synchronization: files that
+	// sync even though .gitignore excludes them. Empty for most syncs and for
+	// .git replicas.
+	SyncInclude   []string `protobuf:"bytes,10,rep,name=sync_include,json=syncInclude,proto3" json:"sync_include,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -910,6 +914,13 @@ func (x *SyncStatus) GetGitReplica() bool {
 		return x.GitReplica
 	}
 	return false
+}
+
+func (x *SyncStatus) GetSyncInclude() []string {
+	if x != nil {
+		return x.SyncInclude
+	}
+	return nil
 }
 
 type ConnectionStatus struct {
@@ -2013,8 +2024,12 @@ type SyncFilesToConnectionRequest struct {
 	// defaults: 644/755 for the working tree, 600/700 for the .git replica.
 	DefaultFileMode      string `protobuf:"bytes,5,opt,name=default_file_mode,json=defaultFileMode,proto3" json:"default_file_mode,omitempty"`
 	DefaultDirectoryMode string `protobuf:"bytes,6,opt,name=default_directory_mode,json=defaultDirectoryMode,proto3" json:"default_directory_mode,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Gitignore-style patterns for content that must sync even though
+	// .gitignore excludes it (e.g. generated protobufs): gitignored for git,
+	// still synced by graft. Applied as "!" negations over the derived ignores.
+	SyncInclude   []string `protobuf:"bytes,7,rep,name=sync_include,json=syncInclude,proto3" json:"sync_include,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SyncFilesToConnectionRequest) Reset() {
@@ -2089,8 +2104,19 @@ func (x *SyncFilesToConnectionRequest) GetDefaultDirectoryMode() string {
 	return ""
 }
 
+func (x *SyncFilesToConnectionRequest) GetSyncInclude() []string {
+	if x != nil {
+		return x.SyncInclude
+	}
+	return nil
+}
+
 type SyncFilesToConnectionResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Human-readable warnings about the synchronization the CLI should surface
+	// to the user, e.g. a syncInclude pattern that is shadowed by a
+	// directory-level ignore and so will not take effect.
+	Warnings      []string `protobuf:"bytes,1,rep,name=warnings,proto3" json:"warnings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2123,6 +2149,13 @@ func (x *SyncFilesToConnectionResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SyncFilesToConnectionResponse.ProtoReflect.Descriptor instead.
 func (*SyncFilesToConnectionResponse) Descriptor() ([]byte, []int) {
 	return file_graft_v1_graft_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *SyncFilesToConnectionResponse) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
 }
 
 type SyncFilesToConnectionProtocolRequest struct {
@@ -4286,7 +4319,7 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x0eremote_changes\x18\x03 \x03(\tR\rremoteChanges\"7\n" +
 	"\vSyncProblem\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xeb\x02\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\x8e\x03\n" +
 	"\n" +
 	"SyncStatus\x12\x1d\n" +
 	"\n" +
@@ -4300,7 +4333,9 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\bproblems\x18\a \x03(\v2\x15.graft.v1.SyncProblemR\bproblems\x12H\n" +
 	"\x10staging_progress\x18\b \x01(\v2\x1d.graft.v1.SyncStagingProgressR\x0fstagingProgress\x12\x1f\n" +
 	"\vgit_replica\x18\t \x01(\bR\n" +
-	"gitReplica\"\xcd\x02\n" +
+	"gitReplica\x12!\n" +
+	"\fsync_include\x18\n" +
+	" \x03(\tR\vsyncInclude\"\xcd\x02\n" +
 	"\x10ConnectionStatus\x12/\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x19.graft.v1.ConnectionStateR\x05state\x12&\n" +
 	"\fstate_reason\x18\x02 \x01(\tH\x00R\vstateReason\x88\x01\x01\x12\x18\n" +
@@ -4384,7 +4419,7 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"&RemoveConnectionForwardCommandsRequest\x12'\n" +
 	"\x0fconnection_name\x18\x01 \x01(\tR\x0econnectionName\x12\x1a\n" +
 	"\bcommands\x18\x02 \x03(\tR\bcommands\")\n" +
-	"'RemoveConnectionForwardCommandsResponse\"\x83\x02\n" +
+	"'RemoveConnectionForwardCommandsResponse\"\xa6\x02\n" +
 	"\x1cSyncFilesToConnectionRequest\x12\x1d\n" +
 	"\n" +
 	"source_dir\x18\x01 \x01(\tR\tsourceDir\x12\x19\n" +
@@ -4392,8 +4427,10 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x12to_connection_name\x18\x03 \x01(\tR\x10toConnectionName\x12\x19\n" +
 	"\bsync_git\x18\x04 \x01(\bR\asyncGit\x12*\n" +
 	"\x11default_file_mode\x18\x05 \x01(\tR\x0fdefaultFileMode\x124\n" +
-	"\x16default_directory_mode\x18\x06 \x01(\tR\x14defaultDirectoryMode\"\x1f\n" +
-	"\x1dSyncFilesToConnectionResponse\":\n" +
+	"\x16default_directory_mode\x18\x06 \x01(\tR\x14defaultDirectoryMode\x12!\n" +
+	"\fsync_include\x18\a \x03(\tR\vsyncInclude\";\n" +
+	"\x1dSyncFilesToConnectionResponse\x12\x1a\n" +
+	"\bwarnings\x18\x01 \x03(\tR\bwarnings\":\n" +
 	"$SyncFilesToConnectionProtocolRequest\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\";\n" +
 	"%SyncFilesToConnectionProtocolResponse\x12\x12\n" +

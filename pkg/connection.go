@@ -52,6 +52,10 @@ type activeSync struct {
 	// configuration changes that require recreating the sessions.
 	defaultFileMode      string
 	defaultDirectoryMode string
+	// syncInclude records the intent's syncInclude override patterns; used to
+	// detect changes that require recreating the session (they alter the
+	// assembled ignore list).
+	syncInclude []string
 }
 
 // inheritModesInto fills an intent's empty modes from the active sync's
@@ -412,6 +416,7 @@ func (conn *Connection) Synchronizations() []SynchronizationIntent {
 			FromLocal:            from,
 			ToRemote:             to.destination,
 			SyncGit:              to.syncGit,
+			SyncInclude:          to.syncInclude,
 			DefaultFileMode:      to.defaultFileMode,
 			DefaultDirectoryMode: to.defaultDirectoryMode,
 		})
@@ -424,16 +429,27 @@ func (conn *Connection) Synchronizations() []SynchronizationIntent {
 // exact same (FromLocal, ToRemote) intent is already active, it is a no-op. If a
 // sync exists for the same FromLocal but with a different destination, an error is
 // returned.
+//
+// It returns any syncInclude patterns that are shadowed by a directory-level
+// ignore and so will not take effect (see shadowedSyncIncludes); callers should
+// surface these to the user. The slice is non-nil only when a session is
+// actually created or recreated.
 func (conn *Connection) EstablishSynchronization(
 	ctx context.Context,
 	syncIntent SynchronizationIntent,
 	syncManager *synchronization.Manager,
-) error {
+) ([]string, error) {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
 		existing.inheritModesInto(&syncIntent)
+
+		// Empty means "no opinion": a bare graft sync must not drop includes
+		// configured elsewhere (mirrors mode inheritance above).
+		if len(syncIntent.SyncInclude) == 0 {
+			syncIntent.SyncInclude = existing.syncInclude
+		}
 	}
 
 	// Fast path: when reconciling from config (which stores already-resolved paths),
@@ -441,15 +457,14 @@ func (conn *Connection) EstablishSynchronization(
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok &&
 		existing.destination == syncIntent.ToRemote && existing.syncGit == syncIntent.SyncGit &&
 		syncModesCompatible(existing.defaultFileMode, existing.defaultDirectoryMode,
-			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) {
-		return nil
+			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) &&
+		syncIncludesCompatible(existing.syncInclude, syncIntent.SyncInclude) {
+		return nil, nil
 	}
-
-	ignores := parseGitignoreToMutagenIgnores(syncIntent.FromLocal)
 
 	resolvedPath, resolveErr := conn.daemon.Connector().RunOneShotCommand(ctx, "echo "+syncIntent.ToRemote)
 	if resolveErr != nil {
-		return errors.WrapPrefix(resolveErr, "error resolving sync to remote path")
+		return nil, errors.WrapPrefix(resolveErr, "error resolving sync to remote path")
 	}
 
 	syncIntent.ToRemote = strings.TrimSpace(strings.TrimSuffix(resolvedPath, "\n"))
@@ -458,29 +473,37 @@ func (conn *Connection) EstablishSynchronization(
 	// an already-active resolved entry.
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
 		if existing.destination != syncIntent.ToRemote {
-			return errors.Errorf(
+			return nil, errors.Errorf(
 				"synchronization for %q already exists with destination %q (cannot override to %q)",
 				syncIntent.FromLocal, existing.destination, syncIntent.ToRemote,
 			)
 		}
 
 		if syncModesCompatible(existing.defaultFileMode, existing.defaultDirectoryMode,
-			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) {
+			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) &&
+			syncIncludesCompatible(existing.syncInclude, syncIntent.SyncInclude) {
 			if existing.syncGit == syncIntent.SyncGit {
-				return nil
+				return nil, nil
 			}
 
-			return conn.applyGitReplicaFlip(ctx, syncManager, syncIntent, existing)
+			return nil, conn.applyGitReplicaFlip(ctx, syncManager, syncIntent, existing)
 		}
 
-		// Explicit mode changes fall through: establishSession terminates the
-		// now-stale mutagen sessions and creates fresh ones, and the map
-		// entry is replaced below.
+		// Explicit mode or syncInclude changes fall through: establishSession
+		// terminates the now-stale mutagen sessions and creates fresh ones (the
+		// new includes alter the ignore list), and the map entry is replaced below.
 	}
+
+	// Assembled here, past the no-op returns above, so the shadowed-include
+	// check runs only when a session is genuinely (re)created rather than on
+	// every reconcile tick.
+	ignores := parseGitignoreToMutagenIgnores(syncIntent.FromLocal)
+	ignores = applySyncIncludes(ignores, syncIntent.SyncInclude)
+	shadowed := shadowedSyncIncludes(ignores, syncIntent.SyncInclude)
 
 	betaConfig, betaErr := syncBetaConfiguration(syncIntent)
 	if betaErr != nil {
-		return errors.WrapPrefix(betaErr, "invalid sync permission modes")
+		return nil, errors.WrapPrefix(betaErr, "invalid sync permission modes")
 	}
 
 	// The sync root is created by graft, not mutagen, so its mode must be
@@ -490,12 +513,12 @@ func (conn *Connection) EstablishSynchronization(
 	mkdirCmd := makeSyncRootCommand(syncIntent.ToRemote, betaConfig.GetDefaultDirectoryMode())
 
 	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
-		return errors.WrapPrefix(mkdirErr, "error making directory for sync to remote path")
+		return nil, errors.WrapPrefix(mkdirErr, "error making directory for sync to remote path")
 	}
 
 	cc, err := conn.daemon.lockedRemoteClientConn()
 	if err != nil {
-		return errors.New("connection is not available")
+		return nil, errors.New("connection is not available")
 	}
 
 	sessionID, err := conn.establishSession(ctx, cc, syncManager,
@@ -510,7 +533,7 @@ func (conn *Connection) EstablishSynchronization(
 		betaConfig,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// The mode-change fall-through can be replacing an entry whose replica is
@@ -529,13 +552,14 @@ func (conn *Connection) EstablishSynchronization(
 		closeFunc:            pauseSessionFunc(syncManager, sessionID),
 		defaultFileMode:      syncIntent.DefaultFileMode,
 		defaultDirectoryMode: syncIntent.DefaultDirectoryMode,
+		syncInclude:          syncIntent.SyncInclude,
 	}
 	conn.synchronizations[syncIntent.FromLocal] = entry
 
 	if syncIntent.SyncGit {
 		gitCloseFunc, gitErr := conn.establishGitReplica(ctx, cc, syncManager, syncIntent)
 		if gitErr != nil {
-			return gitErr
+			return nil, gitErr
 		}
 
 		entry.syncGit = true
@@ -543,7 +567,7 @@ func (conn *Connection) EstablishSynchronization(
 		conn.synchronizations[syncIntent.FromLocal] = entry
 	}
 
-	return nil
+	return shadowed, nil
 }
 
 // applyGitReplicaFlip handles an intent whose endpoints match an active sync

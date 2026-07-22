@@ -54,6 +54,25 @@ func TestValidateSyncModes(t *testing.T) {
 	})
 }
 
+func TestSyncIncludesCompatible(t *testing.T) {
+	t.Run("empty desired matches any existing", func(t *testing.T) {
+		test.That(t, syncIncludesCompatible([]string{"**/*_pb2.py"}, nil), test.ShouldBeTrue)
+	})
+
+	t.Run("equal includes match", func(t *testing.T) {
+		test.That(t, syncIncludesCompatible([]string{"a", "b"}, []string{"a", "b"}), test.ShouldBeTrue)
+	})
+
+	t.Run("reordered includes still match (order-insensitive)", func(t *testing.T) {
+		test.That(t, syncIncludesCompatible([]string{"a", "b"}, []string{"b", "a"}), test.ShouldBeTrue)
+	})
+
+	t.Run("differing includes do not match", func(t *testing.T) {
+		test.That(t, syncIncludesCompatible([]string{"a"}, []string{"b"}), test.ShouldBeFalse)
+		test.That(t, syncIncludesCompatible(nil, []string{"a"}), test.ShouldBeFalse)
+	})
+}
+
 func TestSyncModesCompatible(t *testing.T) {
 	t.Run("empty desired modes match any existing", func(t *testing.T) {
 		test.That(t, syncModesCompatible("640", "750", "", ""), test.ShouldBeTrue)

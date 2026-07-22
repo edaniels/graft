@@ -80,6 +80,30 @@ func TestComputeMissingSyncs(t *testing.T) {
 		test.That(t, got[0].DefaultFileMode, test.ShouldEqual, "600")
 	})
 
+	t.Run("active with different SyncInclude is treated as missing", func(t *testing.T) {
+		desired := []SynchronizationIntentConfig{
+			{FromLocal: "/a", ToRemote: "/A", SyncInclude: []string{"**/*_pb2.py"}},
+		}
+		active := []SynchronizationIntent{
+			{FromLocal: "/a", ToRemote: "/A"},
+		}
+
+		got := computeMissingSyncs(desired, active)
+		test.That(t, len(got), test.ShouldEqual, 1)
+		test.That(t, got[0].SyncInclude, test.ShouldResemble, []string{"**/*_pb2.py"})
+	})
+
+	t.Run("active with matching SyncInclude is skipped", func(t *testing.T) {
+		desired := []SynchronizationIntentConfig{
+			{FromLocal: "/a", ToRemote: "/A", SyncInclude: []string{"**/*_pb2.py"}},
+		}
+		active := []SynchronizationIntent{
+			{FromLocal: "/a", ToRemote: "/A", SyncInclude: []string{"**/*_pb2.py"}},
+		}
+
+		test.That(t, computeMissingSyncs(desired, active), test.ShouldBeEmpty)
+	})
+
 	t.Run("desired with empty modes matches active with explicit modes", func(t *testing.T) {
 		// Empty modes mean "no opinion": a bare graft sync against a sync
 		// whose modes were configured must not reset them.

@@ -299,7 +299,7 @@ func (srv *Server) restore(runCtx context.Context) error {
 			}
 
 			for _, syncIntent := range conf.Synchronizations {
-				err := srv.connMgr.EstablishSynchronization(
+				shadowed, err := srv.connMgr.EstablishSynchronization(
 					runCtx,
 					conf.Name,
 					SynchronizationIntentFromConfig(syncIntent),
@@ -312,6 +312,8 @@ func (srv *Server) restore(runCtx context.Context) error {
 
 					return
 				}
+
+				logShadowedSyncIncludes(runCtx, conf.Name, syncIntent.FromLocal, shadowed)
 			}
 
 			srv.restorePortForwards(runCtx, conf)
@@ -471,17 +473,32 @@ func (srv *Server) reapOrphanSyncs(ctx context.Context, pending []ConnectionConf
 
 func (srv *Server) reconcileSyncs(ctx context.Context, conn *Connection, conf ConnectionConfig) {
 	for _, intent := range computeMissingSyncs(conf.Synchronizations, conn.Synchronizations()) {
-		if err := srv.connMgr.EstablishSynchronization(
+		shadowed, err := srv.connMgr.EstablishSynchronization(
 			ctx, conf.Name, intent, srv.synchronizationManager,
-		); err != nil {
+		)
+		if err != nil {
 			slog.WarnContext(ctx, "reconcile: error establishing synchronization",
 				"name", conf.Name, "from", intent.FromLocal, "to", intent.ToRemote, "error", err)
 
 			continue
 		}
 
+		logShadowedSyncIncludes(ctx, conf.Name, intent.FromLocal, shadowed)
+
 		slog.InfoContext(ctx, "reconcile: established synchronization",
 			"name", conf.Name, "from", intent.FromLocal, "to", intent.ToRemote)
+	}
+}
+
+// logShadowedSyncIncludes logs any syncInclude patterns that will not take
+// effect. Config-driven establishment (restore/reconcile) has no client to
+// return to, so the warning goes to the daemon log; the CLI path surfaces the
+// same warnings directly to the user via the RPC response.
+func logShadowedSyncIncludes(ctx context.Context, connName, fromLocal string, shadowed []string) {
+	for _, pattern := range shadowed {
+		slog.WarnContext(ctx, "syncInclude pattern is shadowed by a directory-level ignore and will not sync; "+
+			"ignore the directory's contents (e.g. \"dir/**\") instead of the directory itself",
+			"name", connName, "from", fromLocal, "pattern", pattern)
 	}
 }
 
@@ -545,7 +562,8 @@ func computeMissingSyncs(desired []SynchronizationIntentConfig, active []Synchro
 		if existing, ok := activeByLocal[intent.FromLocal]; ok &&
 			existing.ToRemote == intent.ToRemote && existing.SyncGit == intent.SyncGit &&
 			syncModesCompatible(existing.DefaultFileMode, existing.DefaultDirectoryMode,
-				intent.DefaultFileMode, intent.DefaultDirectoryMode) {
+				intent.DefaultFileMode, intent.DefaultDirectoryMode) &&
+			syncIncludesCompatible(existing.SyncInclude, intent.SyncInclude) {
 			continue
 		}
 

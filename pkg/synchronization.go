@@ -150,6 +150,32 @@ func syncModesCompatible(existingFileMode, existingDirMode, desiredFileMode, des
 		(desiredDirMode == "" || desiredDirMode == existingDirMode)
 }
 
+// syncIncludesCompatible reports whether a desired intent's syncInclude
+// overrides are satisfied by an active sync's. Empty desired means "no
+// opinion", so a bare graft sync does not drop includes configured elsewhere.
+//
+// Comparison is order-insensitive: includes are all appended as "!" negations
+// and produce the same ignore decision regardless of order, so merely
+// reordering them must not be seen as a change (which would needlessly
+// recreate the session and discard its ancestor archive).
+func syncIncludesCompatible(existing, desired []string) bool {
+	if len(desired) == 0 {
+		return true
+	}
+
+	if len(existing) != len(desired) {
+		return false
+	}
+
+	e := slices.Clone(existing)
+	d := slices.Clone(desired)
+
+	slices.Sort(e)
+	slices.Sort(d)
+
+	return slices.Equal(e, d)
+}
+
 // syncModesConfiguration builds a beta endpoint configuration from an
 // intent's explicit modes, falling back to the given defaults when unset
 // (zero defaults leave the field unset, deferring to mutagen's own).
@@ -245,6 +271,11 @@ type SynchronizationIntent struct {
 	// SyncGit enables a secondary one-way replica of FromLocal's .git
 	// directory to the remote; see gitReplicaIntent.
 	SyncGit bool
+	// SyncInclude are gitignore-style patterns for content that must sync even
+	// though .gitignore excludes it (e.g. generated protobufs): gitignored for
+	// git, still synced by graft. Applied as trailing "!" negations over the
+	// gitignore-derived ignores; see applySyncIncludes.
+	SyncInclude []string
 	// DefaultFileMode and DefaultDirectoryMode are octal permission mode
 	// strings for content the sync writes on the remote; see
 	// [SynchronizationIntentConfig] for semantics. Empty means defaults.

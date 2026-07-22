@@ -119,6 +119,30 @@ func (conf *RootConfig) SyncModesFor(connName, fromLocal string) (string, string
 	return "", ""
 }
 
+// SyncIncludesFor returns the configured syncInclude patterns for the named
+// connection's synchronization from fromLocal, or nil when none are recorded.
+// A request that carries no includes inherits these, so a bare graft sync does
+// not drop includes configured elsewhere (e.g. right after a daemon restart,
+// before reconcile has run).
+func (conf *RootConfig) SyncIncludesFor(connName, fromLocal string) []string {
+	conf.configMu.Lock()
+	defer conf.configMu.Unlock()
+
+	for _, conn := range conf.Connections {
+		if conn.Name != connName {
+			continue
+		}
+
+		for _, syncConf := range conn.Synchronizations {
+			if syncConf.FromLocal == fromLocal {
+				return syncConf.SyncInclude
+			}
+		}
+	}
+
+	return nil
+}
+
 // always update this when new top level fields are added.
 func (conf *RootConfig) cloneFrom(from *RootConfig) {
 	from.configMu.Lock()
@@ -134,6 +158,10 @@ type SynchronizationIntentConfig struct {
 	// SyncGit enables a secondary one-way replica of FromLocal's .git
 	// directory to the remote, giving the remote a read-only git view.
 	SyncGit bool `yaml:"syncGit,omitempty"`
+	// SyncInclude are gitignore-style patterns for content that must sync even
+	// though .gitignore excludes it (e.g. generated protobufs). Each is applied
+	// as a "!" negation over the gitignore-derived ignores.
+	SyncInclude []string `yaml:"syncInclude,omitempty"`
 	// DefaultFileMode and DefaultDirectoryMode are octal permission mode
 	// strings (e.g. "644", "0644") applied to files and directories the sync
 	// creates or updates on the remote. Empty means graft's defaults: "644"

@@ -135,6 +135,45 @@ The replica makes the remote's git **read-only**: `git status`, `log`,
 The initial sync transfers your entire `.git` (which can be large), and a
 local `git gc`/repack re-transfers the rewritten packfiles.
 
+## Syncing gitignored files (e.g. generated code)
+
+By default graft derives its sync ignores from your `.gitignore`, so anything
+git ignores is also skipped by sync. That is usually what you want, but not
+for generated files you deliberately keep out of git yet still need on both
+ends, like generated protobufs for example, that a build on the remote produces
+and you want mirrored back locally.
+
+Use `--include-ignored` (repeatable) to sync a gitignore-style pattern even
+though `.gitignore` excludes it:
+
+```bash
+graft sync --include-ignored '**/*_pb2.py' --include-ignored '**/*.pb.go'
+# or: graft connect --sync --sync-include-ignored '**/*_pb2.py'
+```
+
+or `syncInclude` on a synchronization in the daemon config (and on a
+destination in `graft.yaml`):
+
+```yaml
+destinations:
+  myconn:
+    host: myhost
+    user: ubuntu
+    syncTo: ~/mydir
+    sync: true
+    syncInclude:
+      - "**/*_pb2.py"
+      - "**/*.pb.go"
+```
+
+One caveat, inherited from how git and the sync engine both work: you **cannot
+re-include a file whose parent directory is ignored outright**. Ignore a
+directory's *contents* (`gen/**`), not the directory itself (`gen/`), or the
+scan prunes the directory before the re-include is ever consulted. graft warns
+you (right in the `graft sync` output, and in the daemon log for config-driven
+syncs) when an include pattern is shadowed this way, so it never fails
+silently.
+
 ## Projects and workspaces
 
 Instead of passing flags to `graft connect` every time, you can save connection settings in a `graft.yaml` file.

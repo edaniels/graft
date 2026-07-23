@@ -88,6 +88,7 @@ The plugin auto-triggers when you're working in a graft-managed directory, so yo
 | `use`        | Pin a connection to the current shell session                        |
 | `status`     | Show connection status                                               |
 | `doctor`     | Check environment setup and diagnose issues                          |
+| `lsp`        | Proxy a language server running on the remote ([details](#remote-language-servers-lsp)) |
 | `init`       | Generate a graft.yaml configuration file for future `graft connect`s |
 
 ## Connection selection
@@ -174,6 +175,64 @@ you (right in the `graft sync` output, and in the daemon log for config-driven
 syncs) when an include pattern is shadowed this way, so it never fails
 silently.
 
+## Remote language servers (LSP)
+
+Point your editor's LSP client at graft instead of the language server binary:
+
+```jsonc
+"command": ["graft", "lsp", "rust-analyzer"]
+```
+
+`graft lsp <server>` is a stdio LSP proxy. It starts `<server>` on the
+connection matching your working directory (falling back to a local `<server>`
+if the remote does not have one) and rewrites `file://` URIs between the local
+and remote sides using the connection's path remappings, so the server sees
+remote paths while your editor sees local ones.
+
+### Files that only exist on the remote (`graft://` URIs)
+
+Definitions often land in files outside the synced tree that only exist on the
+remote: the cargo registry, rust std sources, a Go module cache. The proxy
+rewrites those to `graft://<connection>/<remote-path>` URIs and serves their
+content read-only through the LSP 3.18 `workspace/textDocumentContent`
+request, so goto-definition opens the exact bytes the server analyzed, with no
+local copy of the toolchain required. Hover and further navigation keep
+working from inside those buffers; editing and saving them does not (they are
+read-only views).
+
+This requires an LSP client that supports `workspace/textDocumentContent`
+(proposed in LSP 3.18). Tested with Sublime Text's LSP package (>= 2.13.0).
+
+### Sublime Text setup
+
+In `Preferences > Package Settings > LSP > Settings`:
+
+```jsonc
+{
+  "clients": {
+    "rust-remote": {
+      "enabled": true,
+      "selector": "source.rust",
+      "command": ["graft", "lsp", "rust-analyzer"],
+      // Attach to graft:// buffers so goto-def and hover keep working from
+      // inside remote-only sources (the default is ["file"] only).
+      "schemes": ["file", "graft"],
+      // Syntax highlighting for those read-only buffers.
+      "syntax_map": {
+        "graft": "Packages/Rust/Rust.sublime-syntax"
+      }
+    }
+  }
+}
+```
+
+Editors title these buffers with the last segment of the URI, so graft marks
+the file name with the connection it came from, keeping the extension intact
+for editors that infer the language from it: goto-definition into the cargo
+registry opens a tab named `context@myconn.rs` rather than a bare
+`context.rs` that looks local. The marker is stripped before any path reaches
+the language server or the remote filesystem.
+
 ## Projects and workspaces
 
 Instead of passing flags to `graft connect` every time, you can save connection settings in a `graft.yaml` file.
@@ -232,7 +291,6 @@ graft use build          # explicitly switch to it
 ## Coming Soon
 
 - **Transparent SSH agent forwarding** -- use local SSH keys on the remote without manual setup (written, not yet tested)
-- **LSP support** -- run language servers remotely with local editor integration (written, not yet tested)
 
 ## Architecture
 

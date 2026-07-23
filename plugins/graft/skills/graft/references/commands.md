@@ -78,8 +78,13 @@ communication).
 
 ### `graft lsp <remote-executable>`
 
-Run a remote language server with local-side I/O. Marked experimental in the
-proto definition; falls back to local execution if the daemon is unavailable.
+Run a remote language server with local-side I/O. Falls back to local
+execution if the daemon is unavailable or the remote lacks the executable.
+Rewrites file URIs using the connection's path remappings; files outside the
+synced tree (e.g. cargo registry sources) are exposed as read-only
+`graft://<connection>/<remote-path>` URIs served via the LSP 3.18
+`workspace/textDocumentContent` request. Editor setup is documented in the
+main README under "Remote language servers (LSP)".
 
 ## Forwarding
 

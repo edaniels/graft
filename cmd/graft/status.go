@@ -8,8 +8,9 @@ var (
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show connection status overview",
+	Use:     "status",
+	Aliases: []string{"st"},
+	Short:   "Show connection status overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, ctx := newClient(cmd.Context(), cmd, args, true)
 		defer client.Close()

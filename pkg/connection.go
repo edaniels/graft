@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mutagen-io/mutagen/pkg/selection"
 	"github.com/mutagen-io/mutagen/pkg/synchronization"
@@ -24,7 +25,9 @@ import (
 	urlpkg "github.com/mutagen-io/mutagen/pkg/url"
 	"golang.org/x/crypto/ssh/agent"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/edaniels/graft/errors"
 	graftv1 "github.com/edaniels/graft/gen/proto/graft/v1"
@@ -106,6 +109,17 @@ func (conn *Connection) Background() bool {
 	return conn.background
 }
 
+// remoteServiceClient returns a service client against the connection's
+// remote daemon.
+func (conn *Connection) remoteServiceClient() (graftv1.GraftServiceClient, error) {
+	cc, err := conn.daemon.lockedRemoteClientConn()
+	if err != nil {
+		return nil, err
+	}
+
+	return graftv1.NewGraftServiceClient(cc), nil
+}
+
 // RunCommand runs a command on the remote daemon.
 func (conn *Connection) RunCommand(
 	ctx context.Context,
@@ -117,13 +131,12 @@ func (conn *Connection) RunCommand(
 	sudo bool,
 	allocatePty bool,
 	redirectStdout, redirectStderr bool,
+	persistence graftv1.CommandPersistence,
 ) (RunningCommand, error) {
-	cc, err := conn.daemon.lockedRemoteClientConn()
+	remClient, err := conn.remoteServiceClient()
 	if err != nil {
 		return nil, err
 	}
-
-	remClient := graftv1.NewGraftServiceClient(cc)
 
 	runClient, err := remClient.RunCommand(ctx)
 	if err != nil {
@@ -143,6 +156,7 @@ func (conn *Connection) RunCommand(
 				AllocatePty:    allocatePty,
 				RedirectStdout: redirectStdout,
 				RedirectStderr: redirectStderr,
+				Persistence:    persistence,
 			},
 		},
 	})
@@ -158,11 +172,122 @@ func (conn *Connection) RunCommand(
 		return nil, errors.Wrap(err)
 	}
 
-	if _, ok := resp.GetData().(*graftv1.RunCommandResponse_Started); !ok {
+	started, ok := resp.GetData().(*graftv1.RunCommandResponse_Started)
+	if !ok {
 		return nil, errors.New("expected CommandStarted response from remote daemon")
 	}
 
-	return NewRemoteRunningCommand(runClient), nil
+	commandID := started.Started.GetCommandId()
+
+	return newResumableRemoteRunningCommand(
+		ctx, runClient, commandID, conn.Name(), conn.reattachFunc(commandID), 0, 0,
+		conn.deliberateDetachFunc(commandID, started.Started.GetPersistence()),
+	), nil
+}
+
+// deliberateDetachFunc returns a hook (nil unless the command is
+// kill-policy) that gracefully kills the command once its client has
+// deliberately gone away. The remote daemon alone cannot distinguish a client
+// exit from a transport break, so without this explicit goodbye it would
+// keep the command alive for its whole re-attach window.
+func (conn *Connection) deliberateDetachFunc(
+	commandID string,
+	persistence graftv1.CommandPersistence,
+) func() {
+	if persistence != graftv1.CommandPersistence_COMMAND_PERSISTENCE_KILL || commandID == "" {
+		return nil
+	}
+
+	return func() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			remClient, err := conn.remoteServiceClient()
+			if err != nil {
+				return
+			}
+
+			if _, killErr := remClient.KillCommand(ctx, &graftv1.KillCommandRequest{
+				CommandId: commandID,
+				Escalate:  true,
+			}); killErr != nil {
+				slog.DebugContext(ctx, "error killing command after deliberate client exit",
+					"command_id", commandID, "error", killErr)
+			}
+		}()
+	}
+}
+
+// reattachFunc returns a single-attempt attach dialer for the given command;
+// each call grabs the connection's current (possibly reconnected) transport.
+func (conn *Connection) reattachFunc(commandID string) reattachFunc {
+	return func(ctx context.Context, stdoutOffset, stderrOffset uint64) (
+		runCommandStreamClient, *graftv1.CommandAttached, error,
+	) {
+		if state, _ := conn.State(); state == ConnectionStateClosed {
+			// Removed connections never come back; end the resume loop
+			// instead of retrying forever.
+			return nil, nil, status.Error(codes.NotFound, "connection closed: "+conn.Name())
+		}
+
+		remClient, err := conn.remoteServiceClient()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		runClient, err := remClient.RunCommand(ctx)
+		if err != nil {
+			return nil, nil, errors.Wrap(err)
+		}
+
+		if sendErr := runClient.Send(&graftv1.RunCommandRequest{
+			Data: &graftv1.RunCommandRequest_Attach{
+				Attach: &graftv1.AttachCommand{
+					CommandId:    commandID,
+					StdoutOffset: stdoutOffset,
+					StderrOffset: stderrOffset,
+				},
+			},
+		}); sendErr != nil {
+			return nil, nil, errors.Wrap(sendErr)
+		}
+
+		resp, err := runClient.Recv()
+		if err != nil {
+			//nolint:wrapcheck // preserve the gRPC status (e.g. NotFound) for resume decisions
+			return nil, nil, err
+		}
+
+		attached, ok := resp.GetData().(*graftv1.RunCommandResponse_Attached)
+		if !ok {
+			return nil, nil, errors.New("expected CommandAttached response from remote daemon")
+		}
+
+		return runClient, attached.Attached, nil
+	}
+}
+
+// AttachCommand re-attaches to a managed command on the remote daemon,
+// resuming output from the given offsets. The returned command is resumable
+// across transport breaks like a freshly started one.
+func (conn *Connection) AttachCommand(
+	ctx context.Context,
+	commandID string,
+	stdoutOffset, stderrOffset uint64,
+) (RunningCommand, *graftv1.CommandAttached, error) {
+	runClient, attached, err := conn.reattachFunc(commandID)(ctx, stdoutOffset, stderrOffset)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	runningCmd := newResumableRemoteRunningCommand(
+		ctx, runClient, commandID, conn.Name(), conn.reattachFunc(commandID),
+		attached.GetStdoutReplayOffset(), attached.GetStderrReplayOffset(),
+		conn.deliberateDetachFunc(commandID, attached.GetPersistence()),
+	)
+
+	return runningCmd, attached, nil
 }
 
 func (conn *Connection) ForwardSSHAgent(

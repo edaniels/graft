@@ -1,6 +1,7 @@
 package graft
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -810,6 +811,7 @@ func TestConnectionReconnectE2E(t *testing.T) {
 						_, cmdErr := conn.RunCommand(
 							context.Background(),
 							"", false, "echo", []string{"health"}, nil, false, false, true, true,
+							graftv1.CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN,
 						)
 						if cmdErr == nil {
 							close(reconnected)
@@ -867,6 +869,7 @@ func runCommandViaConnectionInDir(t *testing.T, conn *Connection, cwd, command s
 		false, // allocatePty
 		true,  // redirectStdout
 		true,  // redirectStderr
+		graftv1.CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN,
 	)
 	test.That(t, err, test.ShouldBeNil)
 
@@ -1066,4 +1069,119 @@ chmod +x /usr/local/bin/mise`)
 
 	output = runCommandViaConnectionInDir(t, conn, "/home/testuser/project", "graft-extra-tool")
 	test.That(t, output, test.ShouldEqual, "hello-from-extra")
+}
+
+// TestCommandResumeAcrossTransportDropE2E proves the tmux-like resume story
+// end to end: a KEEP command keeps running on the remote daemon while the SSH
+// transport is severed, its output lands in the daemon's ring buffer, and
+// once the connection manager reconnects, the same RemoteRunningCommand
+// re-attaches and replays everything - no lost lines, no duplicates, and the
+// real exit status at the end.
+func TestCommandResumeAcrossTransportDropE2E(t *testing.T) {
+	requireDocker(t)
+	env := getOrSetupE2EEnv(t)
+
+	info := env.startSSHContainerInfo(t)
+
+	mgr := NewConnectionManager(slog.LevelDebug)
+	mgr.RegisterConnectorFactory(sshSchemeName, env.sshConnectorFactory(t))
+	t.Cleanup(mgr.Close)
+
+	connName := sanitizeContainerName("graft-e2e-resume-" + t.Name())
+
+	conn, err := mgr.Initialize(t.Context(), connName, env.sshDestURL(t, info.port), t.TempDir(), "", "", false, false)
+	test.That(t, err, test.ShouldBeNil)
+
+	t.Cleanup(func() {
+		test.That(t, mgr.Remove(context.Background(), connName), test.ShouldBeNil)
+	})
+
+	// The health-check loop is what drives reconnection after the break.
+	runCtx, runCancel := context.WithCancel(t.Context())
+	t.Cleanup(runCancel)
+
+	go mgr.Run(runCtx)
+
+	const totalLines = 40
+
+	// An awk program avoids shell `$` expansions, which the command-wrapping
+	// quoting would otherwise mangle (the wrapped command is re-evaluated by
+	// the remote shell).
+	script := fmt.Sprintf(
+		`BEGIN{for(i=0;i<%d;i++){print "line-" i; fflush(); system("sleep 0.25")}}`,
+		totalLines,
+	)
+
+	runningCmd, err := conn.RunCommand(
+		t.Context(),
+		"",    // cwd
+		false, // shell
+		"awk",
+		[]string{script},
+		nil,   // extraEnv
+		false, // sudo
+		false, // allocatePty
+		true,  // redirectStdout
+		true,  // redirectStderr
+		graftv1.CommandPersistence_COMMAND_PERSISTENCE_KEEP,
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Stderr must be drained like every real consumer does: the stream is an
+	// unbuffered forward, so an unread stderr chunk (e.g. shell startup
+	// noise) would wedge stdout delivery.
+	stderrDone := make(chan struct{})
+
+	go func() {
+		defer close(stderrDone)
+		//nolint:errcheck // draining only
+		io.Copy(io.Discard, runningCmd.Stderr())
+	}()
+
+	scanner := bufio.NewScanner(runningCmd.Stdout())
+
+	var got []string
+
+	// See some output flow before severing the transport.
+	for len(got) < 5 {
+		test.That(t, scanner.Scan(), test.ShouldBeTrue)
+
+		got = append(got, scanner.Text())
+	}
+
+	// Kill the SSH session processes inside the container. The container (and
+	// the detached remote daemon plus the running command) stay alive; only
+	// the transport dies. Session processes are titled "sshd: <user> ..."
+	// while the listener (the container's PID 1) is "sshd: /usr/sbin/sshd
+	// [listener]" - the pattern must not match the latter or the whole
+	// container dies.
+	killCmd := exec.CommandContext(t.Context(), //nolint:gosec
+		"docker", "exec", info.containerID,
+		"sh", "-c", "pkill -f 'sshd: [a-zA-Z0-9]' || pkill sshd-session")
+	test.That(t, killCmd.Run(), test.ShouldBeNil)
+
+	// Keep reading: the stream must resume transparently and deliver every
+	// remaining line exactly once, then end with the command's real exit.
+	for scanner.Scan() {
+		got = append(got, scanner.Text())
+	}
+
+	test.That(t, scanner.Err(), test.ShouldBeNil)
+
+	waitStatus, waitErr := runningCmd.Wait()
+	runningCmd.Release()
+	test.That(t, waitErr, test.ShouldBeNil)
+	test.That(t, waitStatus, test.ShouldEqual, 0)
+
+	select {
+	case <-stderrDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stderr drain to finish")
+	}
+
+	test.That(t, len(got), test.ShouldEqual, totalLines)
+
+	for i, line := range got {
+		test.That(t, line, test.ShouldEqual, fmt.Sprintf("line-%d", i))
+	}
 }

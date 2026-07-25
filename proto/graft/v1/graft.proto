@@ -162,7 +162,23 @@ service GraftService {
   // RunCommand runs the given command on the daemon (locally or forwarded to remote) and exposes std[in/out/err] streams to use.
   //
   // Additionally, the client can control tty information like terminal resizing.
+  //
+  // The first message must be either a StartCommand (start a new command) or an
+  // AttachCommand (re-attach to a managed command that is still running or
+  // recently exited, replaying buffered output).
   rpc RunCommand(stream RunCommandRequest) returns (stream RunCommandResponse) {}
+
+  // ListCommands lists managed commands. On a local daemon, results are aggregated
+  // across connections; on a remote daemon, they are its own managed commands.
+  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse) {}
+
+  // KillCommand signals a managed command's process group.
+  rpc KillCommand(KillCommandRequest) returns (KillCommandResponse) {}
+
+  // DetachCommand disconnects a managed command's attached client (if any),
+  // leaving the command running and re-attachable. The command is flipped to
+  // keep persistence: an explicit detach means "let it run".
+  rpc DetachCommand(DetachCommandRequest) returns (DetachCommandResponse) {}
 }
 
 message VersionInfo {
@@ -472,6 +488,17 @@ message SessionShimmedCommandsResponse {
   map<string, CommandForwardings> destination_commands = 1;
 }
 
+// CommandPersistence controls what happens to a running command when its command
+// stream disconnects before the command has exited.
+enum CommandPersistence {
+  // resolved by the executing daemon: KEEP for pty/shell commands, KILL otherwise.
+  COMMAND_PERSISTENCE_UNKNOWN = 0;
+  // keep the command running detached; it can be re-attached later.
+  COMMAND_PERSISTENCE_KEEP = 1;
+  // terminate the command's process group.
+  COMMAND_PERSISTENCE_KILL = 2;
+}
+
 message StartCommand {
   uint64 pid = 1; // local pid at invocation site; required
   string connection_name = 2; // connection name to send command to; optional; inferred if unset
@@ -486,6 +513,19 @@ message StartCommand {
   bool allocate_pty = 10; // whether or not to allocate a pseudo terminal.
   bool redirect_stdout = 11; // this redirects the stdout of a pty to the bidi command itself.
   bool redirect_stderr = 12; // this redirects the stderr of a pty to the bidi command itself.
+
+  CommandPersistence persistence = 13; // lifetime behavior on client disconnect.
+}
+
+// AttachCommand re-attaches a client to a managed command, replaying buffered
+// output from the given absolute offsets.
+message AttachCommand {
+  string command_id = 1;
+  // connection to route to; optional; searched across connections if unset.
+  // Only meaningful on a local daemon.
+  string connection_name = 2;
+  uint64 stdout_offset = 3; // resume stdout from this absolute offset
+  uint64 stderr_offset = 4; // resume stderr from this absolute offset
 }
 
 // Set an environment variable
@@ -500,6 +540,16 @@ message WindowChange {
   int64 width = 2; // new width
 }
 
+// CommandAck confirms how much output the client has durably consumed, as
+// absolute per-stream offsets. For kill-policy (piped) commands the daemon
+// only releases confirmed output from its bounded buffer; when unconfirmed
+// output fills the buffer, the command's writes block (TCP-like backpressure)
+// instead of old output being evicted, so piped output is lossless.
+message CommandAck {
+  uint64 stdout_offset = 1;
+  uint64 stderr_offset = 2;
+}
+
 message RunCommandRequest {
   oneof data {
     StartCommand start = 1;
@@ -507,10 +557,31 @@ message RunCommandRequest {
     string signal = 3;
     SetEnvVar env_var = 4;
     WindowChange window_change = 5;
+    AttachCommand attach = 6;
+    CommandAck ack = 7;
   }
 }
 
-message CommandStarted {}
+message CommandStarted {
+  string command_id = 1; // identifier for later attach/list/kill
+  string connection_name = 2; // filled in by the local daemon with the resolved connection
+  // the persistence the daemon resolved for the command; lets the local
+  // daemon clean up kill-policy commands immediately when their client exits
+  // deliberately (transport breaks instead get a generous re-attach window).
+  CommandPersistence persistence = 3;
+}
+
+// CommandAttached confirms an attach and reports where output replay begins.
+// Replay offsets may be greater than requested when older output has been
+// evicted from the bounded replay buffer.
+message CommandAttached {
+  string command_id = 1;
+  bool pty = 2; // whether the command has a pty (client should enter raw mode)
+  uint64 stdout_replay_offset = 3;
+  uint64 stderr_replay_offset = 4;
+  bool running = 5; // false when the command already exited (replay and exit status follow)
+  CommandPersistence persistence = 6; // see CommandStarted.persistence
+}
 
 message RunCommandResponse {
   oneof data {
@@ -518,7 +589,61 @@ message RunCommandResponse {
     bytes stderr = 2;
     int64 exit_status = 3;
     CommandStarted started = 4;
+    CommandAttached attached = 5;
   }
+}
+
+// CommandInfo describes a managed command for listing.
+message CommandInfo {
+  string command_id = 1;
+  string connection_name = 2; // filled in by the local daemon
+  string command = 3; // human-readable command line
+  string cwd = 4;
+  bool pty = 5;
+  bool running = 6;
+  int64 exit_status = 7; // meaningful only when running is false
+  int64 started_at_unix = 8;
+  bool attached = 9;
+  CommandPersistence persistence = 10;
+}
+
+message ListCommandsRequest {
+  // connection to list from; optional; all connections if unset.
+  // Only meaningful on a local daemon.
+  string connection_name = 1;
+}
+
+message ListCommandsResponse {
+  repeated CommandInfo commands = 1;
+}
+
+message KillCommandRequest {
+  string command_id = 1;
+  // connection to route to; optional; searched across connections if unset.
+  // Only meaningful on a local daemon.
+  string connection_name = 2;
+  string signal = 3; // signal name (e.g. "SIGTERM", "SIGKILL"); defaults to SIGTERM.
+  // terminate gracefully with escalation (SIGTERM, then SIGKILL after a
+  // grace period) instead of sending a single signal.
+  bool escalate = 4;
+}
+
+message KillCommandResponse {
+  // The command had already exited: nothing was signaled and the (now
+  // delivered) record was removed.
+  bool was_exited = 1;
+  int64 exit_status = 2; // meaningful only when was_exited is true
+}
+
+message DetachCommandRequest {
+  string command_id = 1;
+  // connection to route to; optional; searched across connections if unset.
+  // Only meaningful on a local daemon.
+  string connection_name = 2;
+}
+
+message DetachCommandResponse {
+  bool was_attached = 1; // false when nobody was attached to begin with
 }
 
 // PortInfo describes a single listening port detected on the remote.

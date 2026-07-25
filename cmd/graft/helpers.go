@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -93,6 +94,11 @@ func cliExit(cmd *cobra.Command, args []string, err any, code int) error {
 
 	switch e := err.(type) {
 	case error:
+		if isNilErrorValue(e) {
+			// A typed-nil error would panic status.Convert's Unwrap walk.
+			break
+		}
+
 		if s := status.Convert(e); s != nil {
 			msg = s.Message()
 			// check if we should suggest a connection
@@ -127,6 +133,18 @@ func cliExit(cmd *cobra.Command, args []string, err any, code int) error {
 	}
 
 	return &exitCodeError{code: code, msg: msg}
+}
+
+// isNilErrorValue reports whether the error is nil or a typed-nil pointer
+// hiding inside a non-nil error interface.
+func isNilErrorValue(e error) bool {
+	if e == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(e)
+
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 func newClient(ctx context.Context, cmd *cobra.Command, args []string, withOOBMsgs bool) (*graft.LocalClient, context.Context) {

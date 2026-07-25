@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"go.viam.com/test"
 	"google.golang.org/grpc"
@@ -165,4 +169,128 @@ func TestSortConnectionNames(t *testing.T) {
 		test.That(t, names[1], test.ShouldEqual, "alpha")
 		test.That(t, names[2], test.ShouldEqual, "beta")
 	})
+}
+
+type fakeListCommandsServer struct {
+	graftv1.UnimplementedGraftServiceServer
+
+	commands []*graftv1.CommandInfo
+}
+
+func (s *fakeListCommandsServer) ListCommands(
+	_ context.Context, _ *graftv1.ListCommandsRequest,
+) (*graftv1.ListCommandsResponse, error) {
+	return &graftv1.ListCommandsResponse{Commands: s.commands}, nil
+}
+
+func TestPrintManagedCommandsReturnsUntypedNil(t *testing.T) {
+	client, outBuf := newTestLocalClient(t, &fakeListCommandsServer{
+		commands: []*graftv1.CommandInfo{
+			{CommandId: "abcd1234", ConnectionName: "dev", Command: "npm run dev", Running: true},
+			{CommandId: "ffff0000", ConnectionName: "dev", Command: "make", ExitStatus: 2},
+		},
+	})
+
+	err := client.PrintManagedCommands(t.Context(), "")
+
+	// The == comparison is the regression check for the `graft ps` panic: a
+	// typed-nil *errors.Error would pass reflection-based nil assertions but
+	// still crash callers that treat it as a real error.
+	test.That(t, err == nil, test.ShouldBeTrue)
+
+	out := outBuf.String()
+	test.That(t, out, test.ShouldContainSubstring, "abcd1234")
+	test.That(t, out, test.ShouldContainSubstring, "detached")
+	test.That(t, out, test.ShouldContainSubstring, "exited(2)")
+}
+
+type fakeSignalCommand struct {
+	signals chan string
+}
+
+func (f *fakeSignalCommand) Stdin() io.WriteCloser             { return nopWriteCloser{io.Discard} }
+func (f *fakeSignalCommand) Stdout() io.Reader                 { return strings.NewReader("") }
+func (f *fakeSignalCommand) Stderr() io.Reader                 { return strings.NewReader("") }
+func (f *fakeSignalCommand) Wait() (int, error)                { return 0, nil }
+func (f *fakeSignalCommand) Release()                          {}
+func (f *fakeSignalCommand) SetEnvVar(_, _ string) error       { return nil }
+func (f *fakeSignalCommand) NotifyWindowChange(_, _ int) error { return nil }
+
+func (f *fakeSignalCommand) Signal(sig string) error {
+	f.signals <- sig
+
+	return nil
+}
+
+func TestForwardSignalsToCommand(t *testing.T) {
+	cmd := &fakeSignalCommand{signals: make(chan string, 8)}
+	sigs := make(chan os.Signal, 8)
+	terminated := make(chan int, 1)
+
+	go forwardSignalsToCommand(t.Context(), cmd, sigs, terminated)
+
+	expectForward := func(sig os.Signal, want string) {
+		t.Helper()
+
+		sigs <- sig
+
+		select {
+		case got := <-cmd.signals:
+			test.That(t, got, test.ShouldEqual, want)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%v was not forwarded", sig)
+		}
+	}
+
+	// Every app-facing signal forwards to the command, like a local
+	// foreground process, without ending the local wait.
+	expectForward(syscall.SIGINT, SignalInterrupt)
+	expectForward(syscall.SIGQUIT, SignalQuit)
+	expectForward(syscall.SIGUSR1, SignalUser1)
+	expectForward(syscall.SIGUSR2, SignalUser2)
+
+	select {
+	case <-terminated:
+		t.Fatal("forwarded signals must not terminate the handler")
+	default:
+	}
+
+	// SIGTERM forwards and also releases the handler so the CLI stays killable.
+	expectForward(syscall.SIGTERM, SignalTerminate)
+
+	select {
+	case code := <-terminated:
+		test.That(t, code, test.ShouldEqual, 143)
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGTERM did not release the handler")
+	}
+
+	close(sigs)
+}
+
+func TestForwardSignalsHangupDetachesWithoutForwarding(t *testing.T) {
+	// The terminal going away is a detach: forwarding the HUP would kill a
+	// kept command and defeat its persistence.
+	cmd := &fakeSignalCommand{signals: make(chan string, 8)}
+	sigs := make(chan os.Signal, 8)
+	terminated := make(chan int, 1)
+
+	go forwardSignalsToCommand(t.Context(), cmd, sigs, terminated)
+
+	sigs <- syscall.SIGHUP
+
+	select {
+	case code := <-terminated:
+		test.That(t, code, test.ShouldEqual, 129)
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGHUP did not release the handler")
+	}
+
+	select {
+	case sig := <-cmd.signals:
+		t.Fatalf("SIGHUP must not be forwarded, but %q was sent", sig)
+	default:
+	}
+
+	close(sigs)
 }

@@ -86,20 +86,53 @@ func (rc *LocalRunningCommand) Stderr() io.Reader {
 }
 
 func (rc *LocalRunningCommand) Signal(sig string) error {
-	var sigNum syscall.Signal
-
-	switch sig {
-	case SignalTerminate:
-		sigNum = syscall.SIGTERM
-	default:
-		return errors.WrapSuffix(errUnknownSignal, sig)
+	sigNum, err := signalFromName(sig)
+	if err != nil {
+		return err
 	}
 
-	if err := syscall.Kill(rc.execCmd.Process.Pid, sigNum); err != nil {
-		return errors.WrapPrefix(err, "error sending kill signal via syscall")
+	// Commands are started as process group leaders (Setsid for pty commands,
+	// Setpgid otherwise), so signal the whole group to reach grandchildren.
+	// Fall back to the direct pid if the group is already gone.
+	if err := syscall.Kill(-rc.execCmd.Process.Pid, sigNum); err != nil {
+		if err := syscall.Kill(rc.execCmd.Process.Pid, sigNum); err != nil {
+			return errors.WrapPrefix(err, "error sending kill signal via syscall")
+		}
 	}
 
 	return nil
+}
+
+// signalFromName maps a signal name to its number. Names are matched
+// case-insensitively with or without the SIG prefix (TERM, sigkill, SIGINT).
+func signalFromName(sig string) (syscall.Signal, error) {
+	name := strings.ToUpper(sig)
+	name = strings.TrimPrefix(name, "SIG")
+
+	switch name {
+	case "TERM":
+		return syscall.SIGTERM, nil
+	case "KILL":
+		return syscall.SIGKILL, nil
+	case "INT":
+		return syscall.SIGINT, nil
+	case "HUP":
+		return syscall.SIGHUP, nil
+	case "QUIT":
+		return syscall.SIGQUIT, nil
+	case "USR1":
+		return syscall.SIGUSR1, nil
+	case "USR2":
+		return syscall.SIGUSR2, nil
+	case "STOP":
+		return syscall.SIGSTOP, nil
+	case "CONT":
+		return syscall.SIGCONT, nil
+	case "WINCH":
+		return syscall.SIGWINCH, nil
+	default:
+		return 0, errors.WrapSuffix(errUnknownSignal, sig)
+	}
 }
 
 // PID returns the process ID of the running command.
@@ -126,6 +159,19 @@ func (rc *LocalRunningCommand) Wait() (int, error) {
 func (rc *LocalRunningCommand) Release() {
 	defer rc.stdoutW.Close()
 	defer rc.stderrW.Close()
+}
+
+// ForceCloseOutputs closes the command's output readers, unblocking reads
+// pinned open by descendants that inherited the output fds after the command
+// itself exited. Any not-yet-read output is discarded.
+func (rc *LocalRunningCommand) ForceCloseOutputs() {
+	if closer, ok := rc.stdoutR.(io.Closer); ok {
+		_ = closer.Close()
+	}
+
+	if closer, ok := rc.stderrR.(io.Closer); ok {
+		_ = closer.Close()
+	}
 }
 
 func (rc *LocalRunningCommand) SetEnvVar(_, _ string) error {
@@ -247,10 +293,7 @@ func ExecuteLocalCommand(
 			execCmd.Stdin = ttyFile
 		}
 
-		execCmd.SysProcAttr = &syscall.SysProcAttr{
-			Setsid:  true,
-			Setctty: true,
-		}
+		execCmd.SysProcAttr = commandSysProcAttr(true)
 
 		if err := execCmd.Start(); err != nil {
 			_ = ptyFile.Close()
@@ -291,6 +334,8 @@ func ExecuteLocalCommand(
 			stdoutW = ptyFile
 		}
 	} else {
+		execCmd.SysProcAttr = commandSysProcAttr(false)
+
 		stdinPipeW, err := execCmd.StdinPipe()
 		if err != nil {
 			return nil, errors.Wrap(err)

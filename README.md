@@ -64,6 +64,20 @@ graft forward go make          # forward commands to the remote
 
 All of these commands detect the connection from your current directory. You can also specify a connection explicitly with `--to <connection>`, or pin a connection to your shell session with `graft use <connection>`.
 
+Interactive commands and shells persist on the remote if your terminal or connection dies, and they can be picked back up:
+
+```bash
+graft run -d npm run dev       # start a command detached; prints its id
+graft ps                       # list commands the remote daemons manage
+graft attach <id>              # re-attach, replaying recent output
+graft detach <id>              # disconnect its client; the command keeps running
+graft kill <id>                # terminate a command's process group
+```
+
+If the network drops mid-command (laptop sleep, SSH blip), attached commands resume automatically once the connection reconnects, and disconnected commands are held for up to an hour awaiting re-attach. Interactive (pty) sessions replay the most recent 1MiB per stream on resume, dropping older history tmux-style; piped commands get TCP-like semantics instead, no output is ever dropped, and the command blocks in write once the buffer fills until its consumer returns.
+
+Signals sent to graft during a run or attach (Ctrl-C, SIGTERM, SIGQUIT, SIGUSR1/2) are forwarded to the remote command, like a local foreground process. Closing the terminal (SIGHUP) detaches instead of forwarding, so kept commands survive it; use `graft detach <id>` from another terminal to detach deliberately.
+
 ## Use with Claude Code
 
 If you use [Claude Code](https://claude.com/claude-code), install the graft plugin so Claude knows how to use graft for remote development. It covers running commands, syncing files, forwarding ports, and diagnosing connection issues:

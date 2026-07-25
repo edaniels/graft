@@ -47,6 +47,9 @@ const (
 	GraftService_SessionSelectConnection_FullMethodName         = "/graft.v1.GraftService/SessionSelectConnection"
 	GraftService_SessionPinConnection_FullMethodName            = "/graft.v1.GraftService/SessionPinConnection"
 	GraftService_RunCommand_FullMethodName                      = "/graft.v1.GraftService/RunCommand"
+	GraftService_ListCommands_FullMethodName                    = "/graft.v1.GraftService/ListCommands"
+	GraftService_KillCommand_FullMethodName                     = "/graft.v1.GraftService/KillCommand"
+	GraftService_DetachCommand_FullMethodName                   = "/graft.v1.GraftService/DetachCommand"
 )
 
 // GraftServiceClient is the client API for GraftService service.
@@ -144,7 +147,20 @@ type GraftServiceClient interface {
 	// RunCommand runs the given command on the daemon (locally or forwarded to remote) and exposes std[in/out/err] streams to use.
 	//
 	// Additionally, the client can control tty information like terminal resizing.
+	//
+	// The first message must be either a StartCommand (start a new command) or an
+	// AttachCommand (re-attach to a managed command that is still running or
+	// recently exited, replaying buffered output).
 	RunCommand(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunCommandRequest, RunCommandResponse], error)
+	// ListCommands lists managed commands. On a local daemon, results are aggregated
+	// across connections; on a remote daemon, they are its own managed commands.
+	ListCommands(ctx context.Context, in *ListCommandsRequest, opts ...grpc.CallOption) (*ListCommandsResponse, error)
+	// KillCommand signals a managed command's process group.
+	KillCommand(ctx context.Context, in *KillCommandRequest, opts ...grpc.CallOption) (*KillCommandResponse, error)
+	// DetachCommand disconnects a managed command's attached client (if any),
+	// leaving the command running and re-attachable. The command is flipped to
+	// keep persistence: an explicit detach means "let it run".
+	DetachCommand(ctx context.Context, in *DetachCommandRequest, opts ...grpc.CallOption) (*DetachCommandResponse, error)
 }
 
 type graftServiceClient struct {
@@ -474,6 +490,36 @@ func (c *graftServiceClient) RunCommand(ctx context.Context, opts ...grpc.CallOp
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type GraftService_RunCommandClient = grpc.BidiStreamingClient[RunCommandRequest, RunCommandResponse]
 
+func (c *graftServiceClient) ListCommands(ctx context.Context, in *ListCommandsRequest, opts ...grpc.CallOption) (*ListCommandsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCommandsResponse)
+	err := c.cc.Invoke(ctx, GraftService_ListCommands_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) KillCommand(ctx context.Context, in *KillCommandRequest, opts ...grpc.CallOption) (*KillCommandResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(KillCommandResponse)
+	err := c.cc.Invoke(ctx, GraftService_KillCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) DetachCommand(ctx context.Context, in *DetachCommandRequest, opts ...grpc.CallOption) (*DetachCommandResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DetachCommandResponse)
+	err := c.cc.Invoke(ctx, GraftService_DetachCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GraftServiceServer is the server API for GraftService service.
 // All implementations must embed UnimplementedGraftServiceServer
 // for forward compatibility.
@@ -569,7 +615,20 @@ type GraftServiceServer interface {
 	// RunCommand runs the given command on the daemon (locally or forwarded to remote) and exposes std[in/out/err] streams to use.
 	//
 	// Additionally, the client can control tty information like terminal resizing.
+	//
+	// The first message must be either a StartCommand (start a new command) or an
+	// AttachCommand (re-attach to a managed command that is still running or
+	// recently exited, replaying buffered output).
 	RunCommand(grpc.BidiStreamingServer[RunCommandRequest, RunCommandResponse]) error
+	// ListCommands lists managed commands. On a local daemon, results are aggregated
+	// across connections; on a remote daemon, they are its own managed commands.
+	ListCommands(context.Context, *ListCommandsRequest) (*ListCommandsResponse, error)
+	// KillCommand signals a managed command's process group.
+	KillCommand(context.Context, *KillCommandRequest) (*KillCommandResponse, error)
+	// DetachCommand disconnects a managed command's attached client (if any),
+	// leaving the command running and re-attachable. The command is flipped to
+	// keep persistence: an explicit detach means "let it run".
+	DetachCommand(context.Context, *DetachCommandRequest) (*DetachCommandResponse, error)
 	mustEmbedUnimplementedGraftServiceServer()
 }
 
@@ -663,6 +722,15 @@ func (UnimplementedGraftServiceServer) SessionPinConnection(context.Context, *Se
 }
 func (UnimplementedGraftServiceServer) RunCommand(grpc.BidiStreamingServer[RunCommandRequest, RunCommandResponse]) error {
 	return status.Error(codes.Unimplemented, "method RunCommand not implemented")
+}
+func (UnimplementedGraftServiceServer) ListCommands(context.Context, *ListCommandsRequest) (*ListCommandsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListCommands not implemented")
+}
+func (UnimplementedGraftServiceServer) KillCommand(context.Context, *KillCommandRequest) (*KillCommandResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method KillCommand not implemented")
+}
+func (UnimplementedGraftServiceServer) DetachCommand(context.Context, *DetachCommandRequest) (*DetachCommandResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DetachCommand not implemented")
 }
 func (UnimplementedGraftServiceServer) mustEmbedUnimplementedGraftServiceServer() {}
 func (UnimplementedGraftServiceServer) testEmbeddedByValue()                      {}
@@ -1124,6 +1192,60 @@ func _GraftService_RunCommand_Handler(srv interface{}, stream grpc.ServerStream)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type GraftService_RunCommandServer = grpc.BidiStreamingServer[RunCommandRequest, RunCommandResponse]
 
+func _GraftService_ListCommands_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCommandsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).ListCommands(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_ListCommands_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).ListCommands(ctx, req.(*ListCommandsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_KillCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(KillCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).KillCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_KillCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).KillCommand(ctx, req.(*KillCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_DetachCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DetachCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).DetachCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_DetachCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).DetachCommand(ctx, req.(*DetachCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GraftService_ServiceDesc is the grpc.ServiceDesc for GraftService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1214,6 +1336,18 @@ var GraftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SessionPinConnection",
 			Handler:    _GraftService_SessionPinConnection_Handler,
+		},
+		{
+			MethodName: "ListCommands",
+			Handler:    _GraftService_ListCommands_Handler,
+		},
+		{
+			MethodName: "KillCommand",
+			Handler:    _GraftService_KillCommand_Handler,
+		},
+		{
+			MethodName: "DetachCommand",
+			Handler:    _GraftService_DetachCommand_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

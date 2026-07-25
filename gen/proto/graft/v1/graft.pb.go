@@ -80,6 +80,60 @@ func (ConnectionState) EnumDescriptor() ([]byte, []int) {
 	return file_graft_v1_graft_proto_rawDescGZIP(), []int{0}
 }
 
+// CommandPersistence controls what happens to a running command when its command
+// stream disconnects before the command has exited.
+type CommandPersistence int32
+
+const (
+	// resolved by the executing daemon: KEEP for pty/shell commands, KILL otherwise.
+	CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN CommandPersistence = 0
+	// keep the command running detached; it can be re-attached later.
+	CommandPersistence_COMMAND_PERSISTENCE_KEEP CommandPersistence = 1
+	// terminate the command's process group.
+	CommandPersistence_COMMAND_PERSISTENCE_KILL CommandPersistence = 2
+)
+
+// Enum value maps for CommandPersistence.
+var (
+	CommandPersistence_name = map[int32]string{
+		0: "COMMAND_PERSISTENCE_UNKNOWN",
+		1: "COMMAND_PERSISTENCE_KEEP",
+		2: "COMMAND_PERSISTENCE_KILL",
+	}
+	CommandPersistence_value = map[string]int32{
+		"COMMAND_PERSISTENCE_UNKNOWN": 0,
+		"COMMAND_PERSISTENCE_KEEP":    1,
+		"COMMAND_PERSISTENCE_KILL":    2,
+	}
+)
+
+func (x CommandPersistence) Enum() *CommandPersistence {
+	p := new(CommandPersistence)
+	*p = x
+	return p
+}
+
+func (x CommandPersistence) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CommandPersistence) Descriptor() protoreflect.EnumDescriptor {
+	return file_graft_v1_graft_proto_enumTypes[1].Descriptor()
+}
+
+func (CommandPersistence) Type() protoreflect.EnumType {
+	return &file_graft_v1_graft_proto_enumTypes[1]
+}
+
+func (x CommandPersistence) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CommandPersistence.Descriptor instead.
+func (CommandPersistence) EnumDescriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{1}
+}
+
 type VersionInfo struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// the daemon version.
@@ -2999,9 +3053,10 @@ type StartCommand struct {
 	Arguments      []string               `protobuf:"bytes,7,rep,name=arguments,proto3" json:"arguments,omitempty"`                                 // arguments for the command
 	Sudo           bool                   `protobuf:"varint,8,opt,name=sudo,proto3" json:"sudo,omitempty"`                                          // execute with sudo
 	ExtraEnv       []string               `protobuf:"bytes,9,rep,name=extra_env,json=extraEnv,proto3" json:"extra_env,omitempty"`
-	AllocatePty    bool                   `protobuf:"varint,10,opt,name=allocate_pty,json=allocatePty,proto3" json:"allocate_pty,omitempty"`          // whether or not to allocate a pseudo terminal.
-	RedirectStdout bool                   `protobuf:"varint,11,opt,name=redirect_stdout,json=redirectStdout,proto3" json:"redirect_stdout,omitempty"` // this redirects the stdout of a pty to the bidi command itself.
-	RedirectStderr bool                   `protobuf:"varint,12,opt,name=redirect_stderr,json=redirectStderr,proto3" json:"redirect_stderr,omitempty"` // this redirects the stderr of a pty to the bidi command itself.
+	AllocatePty    bool                   `protobuf:"varint,10,opt,name=allocate_pty,json=allocatePty,proto3" json:"allocate_pty,omitempty"`               // whether or not to allocate a pseudo terminal.
+	RedirectStdout bool                   `protobuf:"varint,11,opt,name=redirect_stdout,json=redirectStdout,proto3" json:"redirect_stdout,omitempty"`      // this redirects the stdout of a pty to the bidi command itself.
+	RedirectStderr bool                   `protobuf:"varint,12,opt,name=redirect_stderr,json=redirectStderr,proto3" json:"redirect_stderr,omitempty"`      // this redirects the stderr of a pty to the bidi command itself.
+	Persistence    CommandPersistence     `protobuf:"varint,13,opt,name=persistence,proto3,enum=graft.v1.CommandPersistence" json:"persistence,omitempty"` // lifetime behavior on client disconnect.
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3120,6 +3175,85 @@ func (x *StartCommand) GetRedirectStderr() bool {
 	return false
 }
 
+func (x *StartCommand) GetPersistence() CommandPersistence {
+	if x != nil {
+		return x.Persistence
+	}
+	return CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN
+}
+
+// AttachCommand re-attaches a client to a managed command, replaying buffered
+// output from the given absolute offsets.
+type AttachCommand struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	CommandId string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
+	// connection to route to; optional; searched across connections if unset.
+	// Only meaningful on a local daemon.
+	ConnectionName string `protobuf:"bytes,2,opt,name=connection_name,json=connectionName,proto3" json:"connection_name,omitempty"`
+	StdoutOffset   uint64 `protobuf:"varint,3,opt,name=stdout_offset,json=stdoutOffset,proto3" json:"stdout_offset,omitempty"` // resume stdout from this absolute offset
+	StderrOffset   uint64 `protobuf:"varint,4,opt,name=stderr_offset,json=stderrOffset,proto3" json:"stderr_offset,omitempty"` // resume stderr from this absolute offset
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AttachCommand) Reset() {
+	*x = AttachCommand{}
+	mi := &file_graft_v1_graft_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttachCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttachCommand) ProtoMessage() {}
+
+func (x *AttachCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttachCommand.ProtoReflect.Descriptor instead.
+func (*AttachCommand) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *AttachCommand) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *AttachCommand) GetConnectionName() string {
+	if x != nil {
+		return x.ConnectionName
+	}
+	return ""
+}
+
+func (x *AttachCommand) GetStdoutOffset() uint64 {
+	if x != nil {
+		return x.StdoutOffset
+	}
+	return 0
+}
+
+func (x *AttachCommand) GetStderrOffset() uint64 {
+	if x != nil {
+		return x.StderrOffset
+	}
+	return 0
+}
+
 // Set an environment variable
 type SetEnvVar struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3131,7 +3265,7 @@ type SetEnvVar struct {
 
 func (x *SetEnvVar) Reset() {
 	*x = SetEnvVar{}
-	mi := &file_graft_v1_graft_proto_msgTypes[55]
+	mi := &file_graft_v1_graft_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3143,7 +3277,7 @@ func (x *SetEnvVar) String() string {
 func (*SetEnvVar) ProtoMessage() {}
 
 func (x *SetEnvVar) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[55]
+	mi := &file_graft_v1_graft_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3156,7 +3290,7 @@ func (x *SetEnvVar) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetEnvVar.ProtoReflect.Descriptor instead.
 func (*SetEnvVar) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{55}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *SetEnvVar) GetKey() string {
@@ -3184,7 +3318,7 @@ type WindowChange struct {
 
 func (x *WindowChange) Reset() {
 	*x = WindowChange{}
-	mi := &file_graft_v1_graft_proto_msgTypes[56]
+	mi := &file_graft_v1_graft_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3196,7 +3330,7 @@ func (x *WindowChange) String() string {
 func (*WindowChange) ProtoMessage() {}
 
 func (x *WindowChange) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[56]
+	mi := &file_graft_v1_graft_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3209,7 +3343,7 @@ func (x *WindowChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WindowChange.ProtoReflect.Descriptor instead.
 func (*WindowChange) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{56}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *WindowChange) GetHeight() int64 {
@@ -3226,6 +3360,63 @@ func (x *WindowChange) GetWidth() int64 {
 	return 0
 }
 
+// CommandAck confirms how much output the client has durably consumed, as
+// absolute per-stream offsets. For kill-policy (piped) commands the daemon
+// only releases confirmed output from its bounded buffer; when unconfirmed
+// output fills the buffer, the command's writes block (TCP-like backpressure)
+// instead of old output being evicted, so piped output is lossless.
+type CommandAck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StdoutOffset  uint64                 `protobuf:"varint,1,opt,name=stdout_offset,json=stdoutOffset,proto3" json:"stdout_offset,omitempty"`
+	StderrOffset  uint64                 `protobuf:"varint,2,opt,name=stderr_offset,json=stderrOffset,proto3" json:"stderr_offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CommandAck) Reset() {
+	*x = CommandAck{}
+	mi := &file_graft_v1_graft_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandAck) ProtoMessage() {}
+
+func (x *CommandAck) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandAck.ProtoReflect.Descriptor instead.
+func (*CommandAck) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *CommandAck) GetStdoutOffset() uint64 {
+	if x != nil {
+		return x.StdoutOffset
+	}
+	return 0
+}
+
+func (x *CommandAck) GetStderrOffset() uint64 {
+	if x != nil {
+		return x.StderrOffset
+	}
+	return 0
+}
+
 type RunCommandRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Data:
@@ -3235,6 +3426,8 @@ type RunCommandRequest struct {
 	//	*RunCommandRequest_Signal
 	//	*RunCommandRequest_EnvVar
 	//	*RunCommandRequest_WindowChange
+	//	*RunCommandRequest_Attach
+	//	*RunCommandRequest_Ack
 	Data          isRunCommandRequest_Data `protobuf_oneof:"data"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3242,7 +3435,7 @@ type RunCommandRequest struct {
 
 func (x *RunCommandRequest) Reset() {
 	*x = RunCommandRequest{}
-	mi := &file_graft_v1_graft_proto_msgTypes[57]
+	mi := &file_graft_v1_graft_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3254,7 +3447,7 @@ func (x *RunCommandRequest) String() string {
 func (*RunCommandRequest) ProtoMessage() {}
 
 func (x *RunCommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[57]
+	mi := &file_graft_v1_graft_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3267,7 +3460,7 @@ func (x *RunCommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunCommandRequest.ProtoReflect.Descriptor instead.
 func (*RunCommandRequest) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{57}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *RunCommandRequest) GetData() isRunCommandRequest_Data {
@@ -3322,6 +3515,24 @@ func (x *RunCommandRequest) GetWindowChange() *WindowChange {
 	return nil
 }
 
+func (x *RunCommandRequest) GetAttach() *AttachCommand {
+	if x != nil {
+		if x, ok := x.Data.(*RunCommandRequest_Attach); ok {
+			return x.Attach
+		}
+	}
+	return nil
+}
+
+func (x *RunCommandRequest) GetAck() *CommandAck {
+	if x != nil {
+		if x, ok := x.Data.(*RunCommandRequest_Ack); ok {
+			return x.Ack
+		}
+	}
+	return nil
+}
+
 type isRunCommandRequest_Data interface {
 	isRunCommandRequest_Data()
 }
@@ -3346,6 +3557,14 @@ type RunCommandRequest_WindowChange struct {
 	WindowChange *WindowChange `protobuf:"bytes,5,opt,name=window_change,json=windowChange,proto3,oneof"`
 }
 
+type RunCommandRequest_Attach struct {
+	Attach *AttachCommand `protobuf:"bytes,6,opt,name=attach,proto3,oneof"`
+}
+
+type RunCommandRequest_Ack struct {
+	Ack *CommandAck `protobuf:"bytes,7,opt,name=ack,proto3,oneof"`
+}
+
 func (*RunCommandRequest_Start) isRunCommandRequest_Data() {}
 
 func (*RunCommandRequest_Stdin) isRunCommandRequest_Data() {}
@@ -3356,15 +3575,25 @@ func (*RunCommandRequest_EnvVar) isRunCommandRequest_Data() {}
 
 func (*RunCommandRequest_WindowChange) isRunCommandRequest_Data() {}
 
+func (*RunCommandRequest_Attach) isRunCommandRequest_Data() {}
+
+func (*RunCommandRequest_Ack) isRunCommandRequest_Data() {}
+
 type CommandStarted struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CommandId      string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`                // identifier for later attach/list/kill
+	ConnectionName string                 `protobuf:"bytes,2,opt,name=connection_name,json=connectionName,proto3" json:"connection_name,omitempty"` // filled in by the local daemon with the resolved connection
+	// the persistence the daemon resolved for the command; lets the local
+	// daemon clean up kill-policy commands immediately when their client exits
+	// deliberately (transport breaks instead get a generous re-attach window).
+	Persistence   CommandPersistence `protobuf:"varint,3,opt,name=persistence,proto3,enum=graft.v1.CommandPersistence" json:"persistence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CommandStarted) Reset() {
 	*x = CommandStarted{}
-	mi := &file_graft_v1_graft_proto_msgTypes[58]
+	mi := &file_graft_v1_graft_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3376,7 +3605,7 @@ func (x *CommandStarted) String() string {
 func (*CommandStarted) ProtoMessage() {}
 
 func (x *CommandStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[58]
+	mi := &file_graft_v1_graft_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3389,7 +3618,115 @@ func (x *CommandStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandStarted.ProtoReflect.Descriptor instead.
 func (*CommandStarted) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{58}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *CommandStarted) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *CommandStarted) GetConnectionName() string {
+	if x != nil {
+		return x.ConnectionName
+	}
+	return ""
+}
+
+func (x *CommandStarted) GetPersistence() CommandPersistence {
+	if x != nil {
+		return x.Persistence
+	}
+	return CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN
+}
+
+// CommandAttached confirms an attach and reports where output replay begins.
+// Replay offsets may be greater than requested when older output has been
+// evicted from the bounded replay buffer.
+type CommandAttached struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	CommandId          string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
+	Pty                bool                   `protobuf:"varint,2,opt,name=pty,proto3" json:"pty,omitempty"` // whether the command has a pty (client should enter raw mode)
+	StdoutReplayOffset uint64                 `protobuf:"varint,3,opt,name=stdout_replay_offset,json=stdoutReplayOffset,proto3" json:"stdout_replay_offset,omitempty"`
+	StderrReplayOffset uint64                 `protobuf:"varint,4,opt,name=stderr_replay_offset,json=stderrReplayOffset,proto3" json:"stderr_replay_offset,omitempty"`
+	Running            bool                   `protobuf:"varint,5,opt,name=running,proto3" json:"running,omitempty"`                                          // false when the command already exited (replay and exit status follow)
+	Persistence        CommandPersistence     `protobuf:"varint,6,opt,name=persistence,proto3,enum=graft.v1.CommandPersistence" json:"persistence,omitempty"` // see CommandStarted.persistence
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *CommandAttached) Reset() {
+	*x = CommandAttached{}
+	mi := &file_graft_v1_graft_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandAttached) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandAttached) ProtoMessage() {}
+
+func (x *CommandAttached) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandAttached.ProtoReflect.Descriptor instead.
+func (*CommandAttached) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *CommandAttached) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *CommandAttached) GetPty() bool {
+	if x != nil {
+		return x.Pty
+	}
+	return false
+}
+
+func (x *CommandAttached) GetStdoutReplayOffset() uint64 {
+	if x != nil {
+		return x.StdoutReplayOffset
+	}
+	return 0
+}
+
+func (x *CommandAttached) GetStderrReplayOffset() uint64 {
+	if x != nil {
+		return x.StderrReplayOffset
+	}
+	return 0
+}
+
+func (x *CommandAttached) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+func (x *CommandAttached) GetPersistence() CommandPersistence {
+	if x != nil {
+		return x.Persistence
+	}
+	return CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN
 }
 
 type RunCommandResponse struct {
@@ -3400,6 +3737,7 @@ type RunCommandResponse struct {
 	//	*RunCommandResponse_Stderr
 	//	*RunCommandResponse_ExitStatus
 	//	*RunCommandResponse_Started
+	//	*RunCommandResponse_Attached
 	Data          isRunCommandResponse_Data `protobuf_oneof:"data"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3407,7 +3745,7 @@ type RunCommandResponse struct {
 
 func (x *RunCommandResponse) Reset() {
 	*x = RunCommandResponse{}
-	mi := &file_graft_v1_graft_proto_msgTypes[59]
+	mi := &file_graft_v1_graft_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3419,7 +3757,7 @@ func (x *RunCommandResponse) String() string {
 func (*RunCommandResponse) ProtoMessage() {}
 
 func (x *RunCommandResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[59]
+	mi := &file_graft_v1_graft_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3432,7 +3770,7 @@ func (x *RunCommandResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunCommandResponse.ProtoReflect.Descriptor instead.
 func (*RunCommandResponse) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{59}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *RunCommandResponse) GetData() isRunCommandResponse_Data {
@@ -3478,6 +3816,15 @@ func (x *RunCommandResponse) GetStarted() *CommandStarted {
 	return nil
 }
 
+func (x *RunCommandResponse) GetAttached() *CommandAttached {
+	if x != nil {
+		if x, ok := x.Data.(*RunCommandResponse_Attached); ok {
+			return x.Attached
+		}
+	}
+	return nil
+}
+
 type isRunCommandResponse_Data interface {
 	isRunCommandResponse_Data()
 }
@@ -3498,6 +3845,10 @@ type RunCommandResponse_Started struct {
 	Started *CommandStarted `protobuf:"bytes,4,opt,name=started,proto3,oneof"`
 }
 
+type RunCommandResponse_Attached struct {
+	Attached *CommandAttached `protobuf:"bytes,5,opt,name=attached,proto3,oneof"`
+}
+
 func (*RunCommandResponse_Stdout) isRunCommandResponse_Data() {}
 
 func (*RunCommandResponse_Stderr) isRunCommandResponse_Data() {}
@@ -3505,6 +3856,439 @@ func (*RunCommandResponse_Stderr) isRunCommandResponse_Data() {}
 func (*RunCommandResponse_ExitStatus) isRunCommandResponse_Data() {}
 
 func (*RunCommandResponse_Started) isRunCommandResponse_Data() {}
+
+func (*RunCommandResponse_Attached) isRunCommandResponse_Data() {}
+
+// CommandInfo describes a managed command for listing.
+type CommandInfo struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CommandId      string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
+	ConnectionName string                 `protobuf:"bytes,2,opt,name=connection_name,json=connectionName,proto3" json:"connection_name,omitempty"` // filled in by the local daemon
+	Command        string                 `protobuf:"bytes,3,opt,name=command,proto3" json:"command,omitempty"`                                     // human-readable command line
+	Cwd            string                 `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Pty            bool                   `protobuf:"varint,5,opt,name=pty,proto3" json:"pty,omitempty"`
+	Running        bool                   `protobuf:"varint,6,opt,name=running,proto3" json:"running,omitempty"`
+	ExitStatus     int64                  `protobuf:"varint,7,opt,name=exit_status,json=exitStatus,proto3" json:"exit_status,omitempty"` // meaningful only when running is false
+	StartedAtUnix  int64                  `protobuf:"varint,8,opt,name=started_at_unix,json=startedAtUnix,proto3" json:"started_at_unix,omitempty"`
+	Attached       bool                   `protobuf:"varint,9,opt,name=attached,proto3" json:"attached,omitempty"`
+	Persistence    CommandPersistence     `protobuf:"varint,10,opt,name=persistence,proto3,enum=graft.v1.CommandPersistence" json:"persistence,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CommandInfo) Reset() {
+	*x = CommandInfo{}
+	mi := &file_graft_v1_graft_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandInfo) ProtoMessage() {}
+
+func (x *CommandInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandInfo.ProtoReflect.Descriptor instead.
+func (*CommandInfo) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *CommandInfo) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *CommandInfo) GetConnectionName() string {
+	if x != nil {
+		return x.ConnectionName
+	}
+	return ""
+}
+
+func (x *CommandInfo) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+func (x *CommandInfo) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
+}
+
+func (x *CommandInfo) GetPty() bool {
+	if x != nil {
+		return x.Pty
+	}
+	return false
+}
+
+func (x *CommandInfo) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+func (x *CommandInfo) GetExitStatus() int64 {
+	if x != nil {
+		return x.ExitStatus
+	}
+	return 0
+}
+
+func (x *CommandInfo) GetStartedAtUnix() int64 {
+	if x != nil {
+		return x.StartedAtUnix
+	}
+	return 0
+}
+
+func (x *CommandInfo) GetAttached() bool {
+	if x != nil {
+		return x.Attached
+	}
+	return false
+}
+
+func (x *CommandInfo) GetPersistence() CommandPersistence {
+	if x != nil {
+		return x.Persistence
+	}
+	return CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN
+}
+
+type ListCommandsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// connection to list from; optional; all connections if unset.
+	// Only meaningful on a local daemon.
+	ConnectionName string `protobuf:"bytes,1,opt,name=connection_name,json=connectionName,proto3" json:"connection_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListCommandsRequest) Reset() {
+	*x = ListCommandsRequest{}
+	mi := &file_graft_v1_graft_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCommandsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCommandsRequest) ProtoMessage() {}
+
+func (x *ListCommandsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCommandsRequest.ProtoReflect.Descriptor instead.
+func (*ListCommandsRequest) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *ListCommandsRequest) GetConnectionName() string {
+	if x != nil {
+		return x.ConnectionName
+	}
+	return ""
+}
+
+type ListCommandsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Commands      []*CommandInfo         `protobuf:"bytes,1,rep,name=commands,proto3" json:"commands,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCommandsResponse) Reset() {
+	*x = ListCommandsResponse{}
+	mi := &file_graft_v1_graft_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCommandsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCommandsResponse) ProtoMessage() {}
+
+func (x *ListCommandsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCommandsResponse.ProtoReflect.Descriptor instead.
+func (*ListCommandsResponse) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *ListCommandsResponse) GetCommands() []*CommandInfo {
+	if x != nil {
+		return x.Commands
+	}
+	return nil
+}
+
+type KillCommandRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	CommandId string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
+	// connection to route to; optional; searched across connections if unset.
+	// Only meaningful on a local daemon.
+	ConnectionName string `protobuf:"bytes,2,opt,name=connection_name,json=connectionName,proto3" json:"connection_name,omitempty"`
+	Signal         string `protobuf:"bytes,3,opt,name=signal,proto3" json:"signal,omitempty"` // signal name (e.g. "SIGTERM", "SIGKILL"); defaults to SIGTERM.
+	// terminate gracefully with escalation (SIGTERM, then SIGKILL after a
+	// grace period) instead of sending a single signal.
+	Escalate      bool `protobuf:"varint,4,opt,name=escalate,proto3" json:"escalate,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KillCommandRequest) Reset() {
+	*x = KillCommandRequest{}
+	mi := &file_graft_v1_graft_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KillCommandRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KillCommandRequest) ProtoMessage() {}
+
+func (x *KillCommandRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KillCommandRequest.ProtoReflect.Descriptor instead.
+func (*KillCommandRequest) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *KillCommandRequest) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *KillCommandRequest) GetConnectionName() string {
+	if x != nil {
+		return x.ConnectionName
+	}
+	return ""
+}
+
+func (x *KillCommandRequest) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+func (x *KillCommandRequest) GetEscalate() bool {
+	if x != nil {
+		return x.Escalate
+	}
+	return false
+}
+
+type KillCommandResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The command had already exited: nothing was signaled and the (now
+	// delivered) record was removed.
+	WasExited     bool  `protobuf:"varint,1,opt,name=was_exited,json=wasExited,proto3" json:"was_exited,omitempty"`
+	ExitStatus    int64 `protobuf:"varint,2,opt,name=exit_status,json=exitStatus,proto3" json:"exit_status,omitempty"` // meaningful only when was_exited is true
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KillCommandResponse) Reset() {
+	*x = KillCommandResponse{}
+	mi := &file_graft_v1_graft_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KillCommandResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KillCommandResponse) ProtoMessage() {}
+
+func (x *KillCommandResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KillCommandResponse.ProtoReflect.Descriptor instead.
+func (*KillCommandResponse) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *KillCommandResponse) GetWasExited() bool {
+	if x != nil {
+		return x.WasExited
+	}
+	return false
+}
+
+func (x *KillCommandResponse) GetExitStatus() int64 {
+	if x != nil {
+		return x.ExitStatus
+	}
+	return 0
+}
+
+type DetachCommandRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	CommandId string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`
+	// connection to route to; optional; searched across connections if unset.
+	// Only meaningful on a local daemon.
+	ConnectionName string `protobuf:"bytes,2,opt,name=connection_name,json=connectionName,proto3" json:"connection_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DetachCommandRequest) Reset() {
+	*x = DetachCommandRequest{}
+	mi := &file_graft_v1_graft_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DetachCommandRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DetachCommandRequest) ProtoMessage() {}
+
+func (x *DetachCommandRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DetachCommandRequest.ProtoReflect.Descriptor instead.
+func (*DetachCommandRequest) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *DetachCommandRequest) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *DetachCommandRequest) GetConnectionName() string {
+	if x != nil {
+		return x.ConnectionName
+	}
+	return ""
+}
+
+type DetachCommandResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WasAttached   bool                   `protobuf:"varint,1,opt,name=was_attached,json=wasAttached,proto3" json:"was_attached,omitempty"` // false when nobody was attached to begin with
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DetachCommandResponse) Reset() {
+	*x = DetachCommandResponse{}
+	mi := &file_graft_v1_graft_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DetachCommandResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DetachCommandResponse) ProtoMessage() {}
+
+func (x *DetachCommandResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_v1_graft_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DetachCommandResponse.ProtoReflect.Descriptor instead.
+func (*DetachCommandResponse) Descriptor() ([]byte, []int) {
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *DetachCommandResponse) GetWasAttached() bool {
+	if x != nil {
+		return x.WasAttached
+	}
+	return false
+}
 
 // PortInfo describes a single listening port detected on the remote.
 type PortInfo struct {
@@ -3518,7 +4302,7 @@ type PortInfo struct {
 
 func (x *PortInfo) Reset() {
 	*x = PortInfo{}
-	mi := &file_graft_v1_graft_proto_msgTypes[60]
+	mi := &file_graft_v1_graft_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3530,7 +4314,7 @@ func (x *PortInfo) String() string {
 func (*PortInfo) ProtoMessage() {}
 
 func (x *PortInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[60]
+	mi := &file_graft_v1_graft_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3543,7 +4327,7 @@ func (x *PortInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PortInfo.ProtoReflect.Descriptor instead.
 func (*PortInfo) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{60}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *PortInfo) GetPort() uint32 {
@@ -3575,7 +4359,7 @@ type WatchPortsRequest struct {
 
 func (x *WatchPortsRequest) Reset() {
 	*x = WatchPortsRequest{}
-	mi := &file_graft_v1_graft_proto_msgTypes[61]
+	mi := &file_graft_v1_graft_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3587,7 +4371,7 @@ func (x *WatchPortsRequest) String() string {
 func (*WatchPortsRequest) ProtoMessage() {}
 
 func (x *WatchPortsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[61]
+	mi := &file_graft_v1_graft_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3600,7 +4384,7 @@ func (x *WatchPortsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchPortsRequest.ProtoReflect.Descriptor instead.
 func (*WatchPortsRequest) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{61}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{71}
 }
 
 // WatchPortsResponse carries a full snapshot of all listening ports each time
@@ -3614,7 +4398,7 @@ type WatchPortsResponse struct {
 
 func (x *WatchPortsResponse) Reset() {
 	*x = WatchPortsResponse{}
-	mi := &file_graft_v1_graft_proto_msgTypes[62]
+	mi := &file_graft_v1_graft_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3626,7 +4410,7 @@ func (x *WatchPortsResponse) String() string {
 func (*WatchPortsResponse) ProtoMessage() {}
 
 func (x *WatchPortsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[62]
+	mi := &file_graft_v1_graft_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3639,7 +4423,7 @@ func (x *WatchPortsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchPortsResponse.ProtoReflect.Descriptor instead.
 func (*WatchPortsResponse) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{62}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *WatchPortsResponse) GetPorts() []*PortInfo {
@@ -3665,7 +4449,7 @@ type ForwardPortRequest struct {
 
 func (x *ForwardPortRequest) Reset() {
 	*x = ForwardPortRequest{}
-	mi := &file_graft_v1_graft_proto_msgTypes[63]
+	mi := &file_graft_v1_graft_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3677,7 +4461,7 @@ func (x *ForwardPortRequest) String() string {
 func (*ForwardPortRequest) ProtoMessage() {}
 
 func (x *ForwardPortRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[63]
+	mi := &file_graft_v1_graft_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3690,7 +4474,7 @@ func (x *ForwardPortRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardPortRequest.ProtoReflect.Descriptor instead.
 func (*ForwardPortRequest) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{63}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ForwardPortRequest) GetData() isForwardPortRequest_Data {
@@ -3746,7 +4530,7 @@ type ForwardPortStart struct {
 
 func (x *ForwardPortStart) Reset() {
 	*x = ForwardPortStart{}
-	mi := &file_graft_v1_graft_proto_msgTypes[64]
+	mi := &file_graft_v1_graft_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3758,7 +4542,7 @@ func (x *ForwardPortStart) String() string {
 func (*ForwardPortStart) ProtoMessage() {}
 
 func (x *ForwardPortStart) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[64]
+	mi := &file_graft_v1_graft_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3771,7 +4555,7 @@ func (x *ForwardPortStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardPortStart.ProtoReflect.Descriptor instead.
 func (*ForwardPortStart) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{64}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *ForwardPortStart) GetPort() uint32 {
@@ -3805,7 +4589,7 @@ type ForwardPortResponse struct {
 
 func (x *ForwardPortResponse) Reset() {
 	*x = ForwardPortResponse{}
-	mi := &file_graft_v1_graft_proto_msgTypes[65]
+	mi := &file_graft_v1_graft_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3817,7 +4601,7 @@ func (x *ForwardPortResponse) String() string {
 func (*ForwardPortResponse) ProtoMessage() {}
 
 func (x *ForwardPortResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[65]
+	mi := &file_graft_v1_graft_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3830,7 +4614,7 @@ func (x *ForwardPortResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardPortResponse.ProtoReflect.Descriptor instead.
 func (*ForwardPortResponse) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{65}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *ForwardPortResponse) GetPayload() []byte {
@@ -3850,7 +4634,7 @@ type SessionPinConnectionRequest struct {
 
 func (x *SessionPinConnectionRequest) Reset() {
 	*x = SessionPinConnectionRequest{}
-	mi := &file_graft_v1_graft_proto_msgTypes[66]
+	mi := &file_graft_v1_graft_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3862,7 +4646,7 @@ func (x *SessionPinConnectionRequest) String() string {
 func (*SessionPinConnectionRequest) ProtoMessage() {}
 
 func (x *SessionPinConnectionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[66]
+	mi := &file_graft_v1_graft_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3875,7 +4659,7 @@ func (x *SessionPinConnectionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionPinConnectionRequest.ProtoReflect.Descriptor instead.
 func (*SessionPinConnectionRequest) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{66}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *SessionPinConnectionRequest) GetPid() uint64 {
@@ -3901,7 +4685,7 @@ type SessionPinConnectionResponse struct {
 
 func (x *SessionPinConnectionResponse) Reset() {
 	*x = SessionPinConnectionResponse{}
-	mi := &file_graft_v1_graft_proto_msgTypes[67]
+	mi := &file_graft_v1_graft_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3913,7 +4697,7 @@ func (x *SessionPinConnectionResponse) String() string {
 func (*SessionPinConnectionResponse) ProtoMessage() {}
 
 func (x *SessionPinConnectionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[67]
+	mi := &file_graft_v1_graft_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3926,7 +4710,7 @@ func (x *SessionPinConnectionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionPinConnectionResponse.ProtoReflect.Descriptor instead.
 func (*SessionPinConnectionResponse) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{67}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *SessionPinConnectionResponse) GetConnectionName() string {
@@ -3948,7 +4732,7 @@ type ExplicitPortForwardSpec struct {
 
 func (x *ExplicitPortForwardSpec) Reset() {
 	*x = ExplicitPortForwardSpec{}
-	mi := &file_graft_v1_graft_proto_msgTypes[68]
+	mi := &file_graft_v1_graft_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3960,7 +4744,7 @@ func (x *ExplicitPortForwardSpec) String() string {
 func (*ExplicitPortForwardSpec) ProtoMessage() {}
 
 func (x *ExplicitPortForwardSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[68]
+	mi := &file_graft_v1_graft_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3973,7 +4757,7 @@ func (x *ExplicitPortForwardSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplicitPortForwardSpec.ProtoReflect.Descriptor instead.
 func (*ExplicitPortForwardSpec) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{68}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *ExplicitPortForwardSpec) GetRemotePort() uint32 {
@@ -4007,7 +4791,7 @@ type AddPortForwardsRequest struct {
 
 func (x *AddPortForwardsRequest) Reset() {
 	*x = AddPortForwardsRequest{}
-	mi := &file_graft_v1_graft_proto_msgTypes[69]
+	mi := &file_graft_v1_graft_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4019,7 +4803,7 @@ func (x *AddPortForwardsRequest) String() string {
 func (*AddPortForwardsRequest) ProtoMessage() {}
 
 func (x *AddPortForwardsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[69]
+	mi := &file_graft_v1_graft_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4032,7 +4816,7 @@ func (x *AddPortForwardsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddPortForwardsRequest.ProtoReflect.Descriptor instead.
 func (*AddPortForwardsRequest) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{69}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *AddPortForwardsRequest) GetConnectionName() string {
@@ -4057,7 +4841,7 @@ type AddPortForwardsResponse struct {
 
 func (x *AddPortForwardsResponse) Reset() {
 	*x = AddPortForwardsResponse{}
-	mi := &file_graft_v1_graft_proto_msgTypes[70]
+	mi := &file_graft_v1_graft_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4069,7 +4853,7 @@ func (x *AddPortForwardsResponse) String() string {
 func (*AddPortForwardsResponse) ProtoMessage() {}
 
 func (x *AddPortForwardsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[70]
+	mi := &file_graft_v1_graft_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4082,7 +4866,7 @@ func (x *AddPortForwardsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddPortForwardsResponse.ProtoReflect.Descriptor instead.
 func (*AddPortForwardsResponse) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{70}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{80}
 }
 
 type RemovePortForwardsRequest struct {
@@ -4095,7 +4879,7 @@ type RemovePortForwardsRequest struct {
 
 func (x *RemovePortForwardsRequest) Reset() {
 	*x = RemovePortForwardsRequest{}
-	mi := &file_graft_v1_graft_proto_msgTypes[71]
+	mi := &file_graft_v1_graft_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4107,7 +4891,7 @@ func (x *RemovePortForwardsRequest) String() string {
 func (*RemovePortForwardsRequest) ProtoMessage() {}
 
 func (x *RemovePortForwardsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[71]
+	mi := &file_graft_v1_graft_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4120,7 +4904,7 @@ func (x *RemovePortForwardsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemovePortForwardsRequest.ProtoReflect.Descriptor instead.
 func (*RemovePortForwardsRequest) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{71}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *RemovePortForwardsRequest) GetConnectionName() string {
@@ -4147,7 +4931,7 @@ type RemovePortForwardsResponse struct {
 
 func (x *RemovePortForwardsResponse) Reset() {
 	*x = RemovePortForwardsResponse{}
-	mi := &file_graft_v1_graft_proto_msgTypes[72]
+	mi := &file_graft_v1_graft_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4159,7 +4943,7 @@ func (x *RemovePortForwardsResponse) String() string {
 func (*RemovePortForwardsResponse) ProtoMessage() {}
 
 func (x *RemovePortForwardsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[72]
+	mi := &file_graft_v1_graft_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4172,7 +4956,7 @@ func (x *RemovePortForwardsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemovePortForwardsResponse.ProtoReflect.Descriptor instead.
 func (*RemovePortForwardsResponse) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{72}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *RemovePortForwardsResponse) GetAutoDetectedPorts() []*ExplicitPortForwardSpec {
@@ -4197,7 +4981,7 @@ type PortForwardStatus struct {
 
 func (x *PortForwardStatus) Reset() {
 	*x = PortForwardStatus{}
-	mi := &file_graft_v1_graft_proto_msgTypes[73]
+	mi := &file_graft_v1_graft_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4209,7 +4993,7 @@ func (x *PortForwardStatus) String() string {
 func (*PortForwardStatus) ProtoMessage() {}
 
 func (x *PortForwardStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_v1_graft_proto_msgTypes[73]
+	mi := &file_graft_v1_graft_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4222,7 +5006,7 @@ func (x *PortForwardStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PortForwardStatus.ProtoReflect.Descriptor instead.
 func (*PortForwardStatus) Descriptor() ([]byte, []int) {
-	return file_graft_v1_graft_proto_rawDescGZIP(), []int{73}
+	return file_graft_v1_graft_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *PortForwardStatus) GetRemotePort() uint32 {
@@ -4479,7 +5263,7 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x14destination_commands\x18\x01 \x03(\v2A.graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntryR\x13destinationCommands\x1ad\n" +
 	"\x18DestinationCommandsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x122\n" +
-	"\x05value\x18\x02 \x01(\v2\x1c.graft.v1.CommandForwardingsR\x05value:\x028\x01\"\xf4\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\x1c.graft.v1.CommandForwardingsR\x05value:\x028\x01\"\xb4\x03\n" +
 	"\fStartCommand\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12'\n" +
 	"\x0fconnection_name\x18\x02 \x01(\tR\x0econnectionName\x12\x10\n" +
@@ -4493,28 +5277,89 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\fallocate_pty\x18\n" +
 	" \x01(\bR\vallocatePty\x12'\n" +
 	"\x0fredirect_stdout\x18\v \x01(\bR\x0eredirectStdout\x12'\n" +
-	"\x0fredirect_stderr\x18\f \x01(\bR\x0eredirectStderr\"3\n" +
+	"\x0fredirect_stderr\x18\f \x01(\bR\x0eredirectStderr\x12>\n" +
+	"\vpersistence\x18\r \x01(\x0e2\x1c.graft.v1.CommandPersistenceR\vpersistence\"\xa1\x01\n" +
+	"\rAttachCommand\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12'\n" +
+	"\x0fconnection_name\x18\x02 \x01(\tR\x0econnectionName\x12#\n" +
+	"\rstdout_offset\x18\x03 \x01(\x04R\fstdoutOffset\x12#\n" +
+	"\rstderr_offset\x18\x04 \x01(\x04R\fstderrOffset\"3\n" +
 	"\tSetEnvVar\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"<\n" +
 	"\fWindowChange\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x03R\x06height\x12\x14\n" +
-	"\x05width\x18\x02 \x01(\x03R\x05width\"\xec\x01\n" +
+	"\x05width\x18\x02 \x01(\x03R\x05width\"V\n" +
+	"\n" +
+	"CommandAck\x12#\n" +
+	"\rstdout_offset\x18\x01 \x01(\x04R\fstdoutOffset\x12#\n" +
+	"\rstderr_offset\x18\x02 \x01(\x04R\fstderrOffset\"\xc9\x02\n" +
 	"\x11RunCommandRequest\x12.\n" +
 	"\x05start\x18\x01 \x01(\v2\x16.graft.v1.StartCommandH\x00R\x05start\x12\x16\n" +
 	"\x05stdin\x18\x02 \x01(\fH\x00R\x05stdin\x12\x18\n" +
 	"\x06signal\x18\x03 \x01(\tH\x00R\x06signal\x12.\n" +
 	"\aenv_var\x18\x04 \x01(\v2\x13.graft.v1.SetEnvVarH\x00R\x06envVar\x12=\n" +
-	"\rwindow_change\x18\x05 \x01(\v2\x16.graft.v1.WindowChangeH\x00R\fwindowChangeB\x06\n" +
-	"\x04data\"\x10\n" +
-	"\x0eCommandStarted\"\xa9\x01\n" +
+	"\rwindow_change\x18\x05 \x01(\v2\x16.graft.v1.WindowChangeH\x00R\fwindowChange\x121\n" +
+	"\x06attach\x18\x06 \x01(\v2\x17.graft.v1.AttachCommandH\x00R\x06attach\x12(\n" +
+	"\x03ack\x18\a \x01(\v2\x14.graft.v1.CommandAckH\x00R\x03ackB\x06\n" +
+	"\x04data\"\x98\x01\n" +
+	"\x0eCommandStarted\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12'\n" +
+	"\x0fconnection_name\x18\x02 \x01(\tR\x0econnectionName\x12>\n" +
+	"\vpersistence\x18\x03 \x01(\x0e2\x1c.graft.v1.CommandPersistenceR\vpersistence\"\x80\x02\n" +
+	"\x0fCommandAttached\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x10\n" +
+	"\x03pty\x18\x02 \x01(\bR\x03pty\x120\n" +
+	"\x14stdout_replay_offset\x18\x03 \x01(\x04R\x12stdoutReplayOffset\x120\n" +
+	"\x14stderr_replay_offset\x18\x04 \x01(\x04R\x12stderrReplayOffset\x12\x18\n" +
+	"\arunning\x18\x05 \x01(\bR\arunning\x12>\n" +
+	"\vpersistence\x18\x06 \x01(\x0e2\x1c.graft.v1.CommandPersistenceR\vpersistence\"\xe2\x01\n" +
 	"\x12RunCommandResponse\x12\x18\n" +
 	"\x06stdout\x18\x01 \x01(\fH\x00R\x06stdout\x12\x18\n" +
 	"\x06stderr\x18\x02 \x01(\fH\x00R\x06stderr\x12!\n" +
 	"\vexit_status\x18\x03 \x01(\x03H\x00R\n" +
 	"exitStatus\x124\n" +
-	"\astarted\x18\x04 \x01(\v2\x18.graft.v1.CommandStartedH\x00R\astartedB\x06\n" +
-	"\x04data\"N\n" +
+	"\astarted\x18\x04 \x01(\v2\x18.graft.v1.CommandStartedH\x00R\astarted\x127\n" +
+	"\battached\x18\x05 \x01(\v2\x19.graft.v1.CommandAttachedH\x00R\battachedB\x06\n" +
+	"\x04data\"\xd2\x02\n" +
+	"\vCommandInfo\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12'\n" +
+	"\x0fconnection_name\x18\x02 \x01(\tR\x0econnectionName\x12\x18\n" +
+	"\acommand\x18\x03 \x01(\tR\acommand\x12\x10\n" +
+	"\x03cwd\x18\x04 \x01(\tR\x03cwd\x12\x10\n" +
+	"\x03pty\x18\x05 \x01(\bR\x03pty\x12\x18\n" +
+	"\arunning\x18\x06 \x01(\bR\arunning\x12\x1f\n" +
+	"\vexit_status\x18\a \x01(\x03R\n" +
+	"exitStatus\x12&\n" +
+	"\x0fstarted_at_unix\x18\b \x01(\x03R\rstartedAtUnix\x12\x1a\n" +
+	"\battached\x18\t \x01(\bR\battached\x12>\n" +
+	"\vpersistence\x18\n" +
+	" \x01(\x0e2\x1c.graft.v1.CommandPersistenceR\vpersistence\">\n" +
+	"\x13ListCommandsRequest\x12'\n" +
+	"\x0fconnection_name\x18\x01 \x01(\tR\x0econnectionName\"I\n" +
+	"\x14ListCommandsResponse\x121\n" +
+	"\bcommands\x18\x01 \x03(\v2\x15.graft.v1.CommandInfoR\bcommands\"\x90\x01\n" +
+	"\x12KillCommandRequest\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12'\n" +
+	"\x0fconnection_name\x18\x02 \x01(\tR\x0econnectionName\x12\x16\n" +
+	"\x06signal\x18\x03 \x01(\tR\x06signal\x12\x1a\n" +
+	"\bescalate\x18\x04 \x01(\bR\bescalate\"U\n" +
+	"\x13KillCommandResponse\x12\x1d\n" +
+	"\n" +
+	"was_exited\x18\x01 \x01(\bR\twasExited\x12\x1f\n" +
+	"\vexit_status\x18\x02 \x01(\x03R\n" +
+	"exitStatus\"^\n" +
+	"\x14DetachCommandRequest\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12'\n" +
+	"\x0fconnection_name\x18\x02 \x01(\tR\x0econnectionName\":\n" +
+	"\x15DetachCommandResponse\x12!\n" +
+	"\fwas_attached\x18\x01 \x01(\bR\vwasAttached\"N\n" +
 	"\bPortInfo\x12\x12\n" +
 	"\x04port\x18\x01 \x01(\rR\x04port\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x1a\n" +
@@ -4567,7 +5412,11 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x1aCONNECTION_STATE_CONNECTED\x10\x02\x12\x1b\n" +
 	"\x17CONNECTION_STATE_FAILED\x10\x03\x12\x1b\n" +
 	"\x17CONNECTION_STATE_CLOSED\x10\x04\x12!\n" +
-	"\x1dCONNECTION_STATE_RECONNECTING\x10\x052\xaf\x15\n" +
+	"\x1dCONNECTION_STATE_RECONNECTING\x10\x05*q\n" +
+	"\x12CommandPersistence\x12\x1f\n" +
+	"\x1bCOMMAND_PERSISTENCE_UNKNOWN\x10\x00\x12\x1c\n" +
+	"\x18COMMAND_PERSISTENCE_KEEP\x10\x01\x12\x1c\n" +
+	"\x18COMMAND_PERSISTENCE_KILL\x10\x022\xa2\x17\n" +
 	"\fGraftService\x12=\n" +
 	"\x06Status\x12\x17.graft.v1.StatusRequest\x1a\x18.graft.v1.StatusResponse\"\x00\x127\n" +
 	"\x04Ping\x12\x15.graft.v1.PingRequest\x1a\x16.graft.v1.PingResponse\"\x00\x12C\n" +
@@ -4598,7 +5447,10 @@ const file_graft_v1_graft_proto_rawDesc = "" +
 	"\x17SessionSelectConnection\x12(.graft.v1.SessionSelectConnectionRequest\x1a).graft.v1.SessionSelectConnectionResponse\"\x00\x12g\n" +
 	"\x14SessionPinConnection\x12%.graft.v1.SessionPinConnectionRequest\x1a&.graft.v1.SessionPinConnectionResponse\"\x00\x12M\n" +
 	"\n" +
-	"RunCommand\x12\x1b.graft.v1.RunCommandRequest\x1a\x1c.graft.v1.RunCommandResponse\"\x00(\x010\x01B\x88\x01\n" +
+	"RunCommand\x12\x1b.graft.v1.RunCommandRequest\x1a\x1c.graft.v1.RunCommandResponse\"\x00(\x010\x01\x12O\n" +
+	"\fListCommands\x12\x1d.graft.v1.ListCommandsRequest\x1a\x1e.graft.v1.ListCommandsResponse\"\x00\x12L\n" +
+	"\vKillCommand\x12\x1c.graft.v1.KillCommandRequest\x1a\x1d.graft.v1.KillCommandResponse\"\x00\x12R\n" +
+	"\rDetachCommand\x12\x1e.graft.v1.DetachCommandRequest\x1a\x1f.graft.v1.DetachCommandResponse\"\x00B\x88\x01\n" +
 	"\fcom.graft.v1B\n" +
 	"GraftProtoP\x01Z+github.com/edaniels/graft/gen/proto/graftv1\xa2\x02\x03GXX\xaa\x02\bGraft.V1\xca\x02\bGraft\\V1\xe2\x02\x14Graft\\V1\\GPBMetadata\xea\x02\tGraft::V1b\x06proto3"
 
@@ -4614,176 +5466,201 @@ func file_graft_v1_graft_proto_rawDescGZIP() []byte {
 	return file_graft_v1_graft_proto_rawDescData
 }
 
-var file_graft_v1_graft_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_graft_v1_graft_proto_msgTypes = make([]protoimpl.MessageInfo, 77)
+var file_graft_v1_graft_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_graft_v1_graft_proto_msgTypes = make([]protoimpl.MessageInfo, 87)
 var file_graft_v1_graft_proto_goTypes = []any{
 	(ConnectionState)(0),                            // 0: graft.v1.ConnectionState
-	(*VersionInfo)(nil),                             // 1: graft.v1.VersionInfo
-	(*StatusRequest)(nil),                           // 2: graft.v1.StatusRequest
-	(*StatusResponse)(nil),                          // 3: graft.v1.StatusResponse
-	(*PingRequest)(nil),                             // 4: graft.v1.PingRequest
-	(*PingResponse)(nil),                            // 5: graft.v1.PingResponse
-	(*ShutdownRequest)(nil),                         // 6: graft.v1.ShutdownRequest
-	(*ShutdownResponse)(nil),                        // 7: graft.v1.ShutdownResponse
-	(*RestartRequest)(nil),                          // 8: graft.v1.RestartRequest
-	(*RestartResponse)(nil),                         // 9: graft.v1.RestartResponse
-	(*OOBMessagesRequest)(nil),                      // 10: graft.v1.OOBMessagesRequest
-	(*OOBMessagesResponse)(nil),                     // 11: graft.v1.OOBMessagesResponse
-	(*SyncStagingProgress)(nil),                     // 12: graft.v1.SyncStagingProgress
-	(*SyncConflict)(nil),                            // 13: graft.v1.SyncConflict
-	(*SyncProblem)(nil),                             // 14: graft.v1.SyncProblem
-	(*SyncStatus)(nil),                              // 15: graft.v1.SyncStatus
-	(*ConnectionStatus)(nil),                        // 16: graft.v1.ConnectionStatus
-	(*ListConnectionsRequest)(nil),                  // 17: graft.v1.ListConnectionsRequest
-	(*ListConnectionsResponse)(nil),                 // 18: graft.v1.ListConnectionsResponse
-	(*InitializeSSHConnectionRequest)(nil),          // 19: graft.v1.InitializeSSHConnectionRequest
-	(*InitializeSSHConnectionResponse)(nil),         // 20: graft.v1.InitializeSSHConnectionResponse
-	(*InitializeContainerConnectionRequest)(nil),    // 21: graft.v1.InitializeContainerConnectionRequest
-	(*InitializeContainerConnectionResponse)(nil),   // 22: graft.v1.InitializeContainerConnectionResponse
-	(*RemoveConnectionRequest)(nil),                 // 23: graft.v1.RemoveConnectionRequest
-	(*RemoveConnectionResponse)(nil),                // 24: graft.v1.RemoveConnectionResponse
-	(*DiscoverCommandsRequest)(nil),                 // 25: graft.v1.DiscoverCommandsRequest
-	(*DiscoveredCommands)(nil),                      // 26: graft.v1.DiscoveredCommands
-	(*DiscoverCommandsResponse)(nil),                // 27: graft.v1.DiscoverCommandsResponse
-	(*UpdateConnectionRootsRequest)(nil),            // 28: graft.v1.UpdateConnectionRootsRequest
-	(*UpdateConnectionRootsResponse)(nil),           // 29: graft.v1.UpdateConnectionRootsResponse
-	(*GetConnectionAvailableCommandsRequest)(nil),   // 30: graft.v1.GetConnectionAvailableCommandsRequest
-	(*GetConnectionAvailableCommandsResponse)(nil),  // 31: graft.v1.GetConnectionAvailableCommandsResponse
-	(*UpdateConnectionForwardCommandsRequest)(nil),  // 32: graft.v1.UpdateConnectionForwardCommandsRequest
-	(*UpdateConnectionForwardCommandsResponse)(nil), // 33: graft.v1.UpdateConnectionForwardCommandsResponse
-	(*RemoveConnectionForwardCommandsRequest)(nil),  // 34: graft.v1.RemoveConnectionForwardCommandsRequest
-	(*RemoveConnectionForwardCommandsResponse)(nil), // 35: graft.v1.RemoveConnectionForwardCommandsResponse
-	(*SyncFilesToConnectionRequest)(nil),            // 36: graft.v1.SyncFilesToConnectionRequest
-	(*SyncFilesToConnectionResponse)(nil),           // 37: graft.v1.SyncFilesToConnectionResponse
-	(*SyncFilesToConnectionProtocolRequest)(nil),    // 38: graft.v1.SyncFilesToConnectionProtocolRequest
-	(*SyncFilesToConnectionProtocolResponse)(nil),   // 39: graft.v1.SyncFilesToConnectionProtocolResponse
-	(*DumpLogsRequest)(nil),                         // 40: graft.v1.DumpLogsRequest
-	(*DumpLogsResponse)(nil),                        // 41: graft.v1.DumpLogsResponse
-	(*ForwardSSHAgentRequest)(nil),                  // 42: graft.v1.ForwardSSHAgentRequest
-	(*ForwardSSHAgentResponse)(nil),                 // 43: graft.v1.ForwardSSHAgentResponse
-	(*SessionReportCWDRequest)(nil),                 // 44: graft.v1.SessionReportCWDRequest
-	(*SessionReportCWDResponse)(nil),                // 45: graft.v1.SessionReportCWDResponse
-	(*SessionWhichRequest)(nil),                     // 46: graft.v1.SessionWhichRequest
-	(*SessionWhichResponse)(nil),                    // 47: graft.v1.SessionWhichResponse
-	(*SessionSelectConnectionRequest)(nil),          // 48: graft.v1.SessionSelectConnectionRequest
-	(*PathRemapping)(nil),                           // 49: graft.v1.PathRemapping
-	(*SessionSelectConnectionResponse)(nil),         // 50: graft.v1.SessionSelectConnectionResponse
-	(*CommandForwarding)(nil),                       // 51: graft.v1.CommandForwarding
-	(*CommandForwardings)(nil),                      // 52: graft.v1.CommandForwardings
-	(*SessionShimmedCommandsRequest)(nil),           // 53: graft.v1.SessionShimmedCommandsRequest
-	(*SessionShimmedCommandsResponse)(nil),          // 54: graft.v1.SessionShimmedCommandsResponse
-	(*StartCommand)(nil),                            // 55: graft.v1.StartCommand
-	(*SetEnvVar)(nil),                               // 56: graft.v1.SetEnvVar
-	(*WindowChange)(nil),                            // 57: graft.v1.WindowChange
-	(*RunCommandRequest)(nil),                       // 58: graft.v1.RunCommandRequest
-	(*CommandStarted)(nil),                          // 59: graft.v1.CommandStarted
-	(*RunCommandResponse)(nil),                      // 60: graft.v1.RunCommandResponse
-	(*PortInfo)(nil),                                // 61: graft.v1.PortInfo
-	(*WatchPortsRequest)(nil),                       // 62: graft.v1.WatchPortsRequest
-	(*WatchPortsResponse)(nil),                      // 63: graft.v1.WatchPortsResponse
-	(*ForwardPortRequest)(nil),                      // 64: graft.v1.ForwardPortRequest
-	(*ForwardPortStart)(nil),                        // 65: graft.v1.ForwardPortStart
-	(*ForwardPortResponse)(nil),                     // 66: graft.v1.ForwardPortResponse
-	(*SessionPinConnectionRequest)(nil),             // 67: graft.v1.SessionPinConnectionRequest
-	(*SessionPinConnectionResponse)(nil),            // 68: graft.v1.SessionPinConnectionResponse
-	(*ExplicitPortForwardSpec)(nil),                 // 69: graft.v1.ExplicitPortForwardSpec
-	(*AddPortForwardsRequest)(nil),                  // 70: graft.v1.AddPortForwardsRequest
-	(*AddPortForwardsResponse)(nil),                 // 71: graft.v1.AddPortForwardsResponse
-	(*RemovePortForwardsRequest)(nil),               // 72: graft.v1.RemovePortForwardsRequest
-	(*RemovePortForwardsResponse)(nil),              // 73: graft.v1.RemovePortForwardsResponse
-	(*PortForwardStatus)(nil),                       // 74: graft.v1.PortForwardStatus
-	nil,                                             // 75: graft.v1.ListConnectionsResponse.ConnectionsEntry
-	nil,                                             // 76: graft.v1.DiscoverCommandsResponse.CommandsByDirectoryEntry
-	nil,                                             // 77: graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntry
-	(*durationpb.Duration)(nil),                     // 78: google.protobuf.Duration
+	(CommandPersistence)(0),                         // 1: graft.v1.CommandPersistence
+	(*VersionInfo)(nil),                             // 2: graft.v1.VersionInfo
+	(*StatusRequest)(nil),                           // 3: graft.v1.StatusRequest
+	(*StatusResponse)(nil),                          // 4: graft.v1.StatusResponse
+	(*PingRequest)(nil),                             // 5: graft.v1.PingRequest
+	(*PingResponse)(nil),                            // 6: graft.v1.PingResponse
+	(*ShutdownRequest)(nil),                         // 7: graft.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),                        // 8: graft.v1.ShutdownResponse
+	(*RestartRequest)(nil),                          // 9: graft.v1.RestartRequest
+	(*RestartResponse)(nil),                         // 10: graft.v1.RestartResponse
+	(*OOBMessagesRequest)(nil),                      // 11: graft.v1.OOBMessagesRequest
+	(*OOBMessagesResponse)(nil),                     // 12: graft.v1.OOBMessagesResponse
+	(*SyncStagingProgress)(nil),                     // 13: graft.v1.SyncStagingProgress
+	(*SyncConflict)(nil),                            // 14: graft.v1.SyncConflict
+	(*SyncProblem)(nil),                             // 15: graft.v1.SyncProblem
+	(*SyncStatus)(nil),                              // 16: graft.v1.SyncStatus
+	(*ConnectionStatus)(nil),                        // 17: graft.v1.ConnectionStatus
+	(*ListConnectionsRequest)(nil),                  // 18: graft.v1.ListConnectionsRequest
+	(*ListConnectionsResponse)(nil),                 // 19: graft.v1.ListConnectionsResponse
+	(*InitializeSSHConnectionRequest)(nil),          // 20: graft.v1.InitializeSSHConnectionRequest
+	(*InitializeSSHConnectionResponse)(nil),         // 21: graft.v1.InitializeSSHConnectionResponse
+	(*InitializeContainerConnectionRequest)(nil),    // 22: graft.v1.InitializeContainerConnectionRequest
+	(*InitializeContainerConnectionResponse)(nil),   // 23: graft.v1.InitializeContainerConnectionResponse
+	(*RemoveConnectionRequest)(nil),                 // 24: graft.v1.RemoveConnectionRequest
+	(*RemoveConnectionResponse)(nil),                // 25: graft.v1.RemoveConnectionResponse
+	(*DiscoverCommandsRequest)(nil),                 // 26: graft.v1.DiscoverCommandsRequest
+	(*DiscoveredCommands)(nil),                      // 27: graft.v1.DiscoveredCommands
+	(*DiscoverCommandsResponse)(nil),                // 28: graft.v1.DiscoverCommandsResponse
+	(*UpdateConnectionRootsRequest)(nil),            // 29: graft.v1.UpdateConnectionRootsRequest
+	(*UpdateConnectionRootsResponse)(nil),           // 30: graft.v1.UpdateConnectionRootsResponse
+	(*GetConnectionAvailableCommandsRequest)(nil),   // 31: graft.v1.GetConnectionAvailableCommandsRequest
+	(*GetConnectionAvailableCommandsResponse)(nil),  // 32: graft.v1.GetConnectionAvailableCommandsResponse
+	(*UpdateConnectionForwardCommandsRequest)(nil),  // 33: graft.v1.UpdateConnectionForwardCommandsRequest
+	(*UpdateConnectionForwardCommandsResponse)(nil), // 34: graft.v1.UpdateConnectionForwardCommandsResponse
+	(*RemoveConnectionForwardCommandsRequest)(nil),  // 35: graft.v1.RemoveConnectionForwardCommandsRequest
+	(*RemoveConnectionForwardCommandsResponse)(nil), // 36: graft.v1.RemoveConnectionForwardCommandsResponse
+	(*SyncFilesToConnectionRequest)(nil),            // 37: graft.v1.SyncFilesToConnectionRequest
+	(*SyncFilesToConnectionResponse)(nil),           // 38: graft.v1.SyncFilesToConnectionResponse
+	(*SyncFilesToConnectionProtocolRequest)(nil),    // 39: graft.v1.SyncFilesToConnectionProtocolRequest
+	(*SyncFilesToConnectionProtocolResponse)(nil),   // 40: graft.v1.SyncFilesToConnectionProtocolResponse
+	(*DumpLogsRequest)(nil),                         // 41: graft.v1.DumpLogsRequest
+	(*DumpLogsResponse)(nil),                        // 42: graft.v1.DumpLogsResponse
+	(*ForwardSSHAgentRequest)(nil),                  // 43: graft.v1.ForwardSSHAgentRequest
+	(*ForwardSSHAgentResponse)(nil),                 // 44: graft.v1.ForwardSSHAgentResponse
+	(*SessionReportCWDRequest)(nil),                 // 45: graft.v1.SessionReportCWDRequest
+	(*SessionReportCWDResponse)(nil),                // 46: graft.v1.SessionReportCWDResponse
+	(*SessionWhichRequest)(nil),                     // 47: graft.v1.SessionWhichRequest
+	(*SessionWhichResponse)(nil),                    // 48: graft.v1.SessionWhichResponse
+	(*SessionSelectConnectionRequest)(nil),          // 49: graft.v1.SessionSelectConnectionRequest
+	(*PathRemapping)(nil),                           // 50: graft.v1.PathRemapping
+	(*SessionSelectConnectionResponse)(nil),         // 51: graft.v1.SessionSelectConnectionResponse
+	(*CommandForwarding)(nil),                       // 52: graft.v1.CommandForwarding
+	(*CommandForwardings)(nil),                      // 53: graft.v1.CommandForwardings
+	(*SessionShimmedCommandsRequest)(nil),           // 54: graft.v1.SessionShimmedCommandsRequest
+	(*SessionShimmedCommandsResponse)(nil),          // 55: graft.v1.SessionShimmedCommandsResponse
+	(*StartCommand)(nil),                            // 56: graft.v1.StartCommand
+	(*AttachCommand)(nil),                           // 57: graft.v1.AttachCommand
+	(*SetEnvVar)(nil),                               // 58: graft.v1.SetEnvVar
+	(*WindowChange)(nil),                            // 59: graft.v1.WindowChange
+	(*CommandAck)(nil),                              // 60: graft.v1.CommandAck
+	(*RunCommandRequest)(nil),                       // 61: graft.v1.RunCommandRequest
+	(*CommandStarted)(nil),                          // 62: graft.v1.CommandStarted
+	(*CommandAttached)(nil),                         // 63: graft.v1.CommandAttached
+	(*RunCommandResponse)(nil),                      // 64: graft.v1.RunCommandResponse
+	(*CommandInfo)(nil),                             // 65: graft.v1.CommandInfo
+	(*ListCommandsRequest)(nil),                     // 66: graft.v1.ListCommandsRequest
+	(*ListCommandsResponse)(nil),                    // 67: graft.v1.ListCommandsResponse
+	(*KillCommandRequest)(nil),                      // 68: graft.v1.KillCommandRequest
+	(*KillCommandResponse)(nil),                     // 69: graft.v1.KillCommandResponse
+	(*DetachCommandRequest)(nil),                    // 70: graft.v1.DetachCommandRequest
+	(*DetachCommandResponse)(nil),                   // 71: graft.v1.DetachCommandResponse
+	(*PortInfo)(nil),                                // 72: graft.v1.PortInfo
+	(*WatchPortsRequest)(nil),                       // 73: graft.v1.WatchPortsRequest
+	(*WatchPortsResponse)(nil),                      // 74: graft.v1.WatchPortsResponse
+	(*ForwardPortRequest)(nil),                      // 75: graft.v1.ForwardPortRequest
+	(*ForwardPortStart)(nil),                        // 76: graft.v1.ForwardPortStart
+	(*ForwardPortResponse)(nil),                     // 77: graft.v1.ForwardPortResponse
+	(*SessionPinConnectionRequest)(nil),             // 78: graft.v1.SessionPinConnectionRequest
+	(*SessionPinConnectionResponse)(nil),            // 79: graft.v1.SessionPinConnectionResponse
+	(*ExplicitPortForwardSpec)(nil),                 // 80: graft.v1.ExplicitPortForwardSpec
+	(*AddPortForwardsRequest)(nil),                  // 81: graft.v1.AddPortForwardsRequest
+	(*AddPortForwardsResponse)(nil),                 // 82: graft.v1.AddPortForwardsResponse
+	(*RemovePortForwardsRequest)(nil),               // 83: graft.v1.RemovePortForwardsRequest
+	(*RemovePortForwardsResponse)(nil),              // 84: graft.v1.RemovePortForwardsResponse
+	(*PortForwardStatus)(nil),                       // 85: graft.v1.PortForwardStatus
+	nil,                                             // 86: graft.v1.ListConnectionsResponse.ConnectionsEntry
+	nil,                                             // 87: graft.v1.DiscoverCommandsResponse.CommandsByDirectoryEntry
+	nil,                                             // 88: graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntry
+	(*durationpb.Duration)(nil),                     // 89: google.protobuf.Duration
 }
 var file_graft_v1_graft_proto_depIdxs = []int32{
-	1,  // 0: graft.v1.StatusResponse.version_info:type_name -> graft.v1.VersionInfo
-	78, // 1: graft.v1.StatusResponse.uptime:type_name -> google.protobuf.Duration
-	13, // 2: graft.v1.SyncStatus.conflicts:type_name -> graft.v1.SyncConflict
-	14, // 3: graft.v1.SyncStatus.problems:type_name -> graft.v1.SyncProblem
-	12, // 4: graft.v1.SyncStatus.staging_progress:type_name -> graft.v1.SyncStagingProgress
+	2,  // 0: graft.v1.StatusResponse.version_info:type_name -> graft.v1.VersionInfo
+	89, // 1: graft.v1.StatusResponse.uptime:type_name -> google.protobuf.Duration
+	14, // 2: graft.v1.SyncStatus.conflicts:type_name -> graft.v1.SyncConflict
+	15, // 3: graft.v1.SyncStatus.problems:type_name -> graft.v1.SyncProblem
+	13, // 4: graft.v1.SyncStatus.staging_progress:type_name -> graft.v1.SyncStagingProgress
 	0,  // 5: graft.v1.ConnectionStatus.state:type_name -> graft.v1.ConnectionState
-	15, // 6: graft.v1.ConnectionStatus.sync_statuses:type_name -> graft.v1.SyncStatus
-	74, // 7: graft.v1.ConnectionStatus.port_forward_statuses:type_name -> graft.v1.PortForwardStatus
-	75, // 8: graft.v1.ListConnectionsResponse.connections:type_name -> graft.v1.ListConnectionsResponse.ConnectionsEntry
-	76, // 9: graft.v1.DiscoverCommandsResponse.commands_by_directory:type_name -> graft.v1.DiscoverCommandsResponse.CommandsByDirectoryEntry
-	49, // 10: graft.v1.SessionSelectConnectionResponse.path_remappings:type_name -> graft.v1.PathRemapping
-	51, // 11: graft.v1.CommandForwardings.commands:type_name -> graft.v1.CommandForwarding
-	77, // 12: graft.v1.SessionShimmedCommandsResponse.destination_commands:type_name -> graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntry
-	55, // 13: graft.v1.RunCommandRequest.start:type_name -> graft.v1.StartCommand
-	56, // 14: graft.v1.RunCommandRequest.env_var:type_name -> graft.v1.SetEnvVar
-	57, // 15: graft.v1.RunCommandRequest.window_change:type_name -> graft.v1.WindowChange
-	59, // 16: graft.v1.RunCommandResponse.started:type_name -> graft.v1.CommandStarted
-	61, // 17: graft.v1.WatchPortsResponse.ports:type_name -> graft.v1.PortInfo
-	65, // 18: graft.v1.ForwardPortRequest.start:type_name -> graft.v1.ForwardPortStart
-	69, // 19: graft.v1.AddPortForwardsRequest.ports:type_name -> graft.v1.ExplicitPortForwardSpec
-	69, // 20: graft.v1.RemovePortForwardsRequest.ports:type_name -> graft.v1.ExplicitPortForwardSpec
-	69, // 21: graft.v1.RemovePortForwardsResponse.auto_detected_ports:type_name -> graft.v1.ExplicitPortForwardSpec
-	16, // 22: graft.v1.ListConnectionsResponse.ConnectionsEntry.value:type_name -> graft.v1.ConnectionStatus
-	26, // 23: graft.v1.DiscoverCommandsResponse.CommandsByDirectoryEntry.value:type_name -> graft.v1.DiscoveredCommands
-	52, // 24: graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntry.value:type_name -> graft.v1.CommandForwardings
-	2,  // 25: graft.v1.GraftService.Status:input_type -> graft.v1.StatusRequest
-	4,  // 26: graft.v1.GraftService.Ping:input_type -> graft.v1.PingRequest
-	6,  // 27: graft.v1.GraftService.Shutdown:input_type -> graft.v1.ShutdownRequest
-	8,  // 28: graft.v1.GraftService.Restart:input_type -> graft.v1.RestartRequest
-	10, // 29: graft.v1.GraftService.OOBMessages:input_type -> graft.v1.OOBMessagesRequest
-	17, // 30: graft.v1.GraftService.ListConnections:input_type -> graft.v1.ListConnectionsRequest
-	19, // 31: graft.v1.GraftService.InitializeSSHConnection:input_type -> graft.v1.InitializeSSHConnectionRequest
-	21, // 32: graft.v1.GraftService.InitializeContainerConnection:input_type -> graft.v1.InitializeContainerConnectionRequest
-	23, // 33: graft.v1.GraftService.RemoveConnection:input_type -> graft.v1.RemoveConnectionRequest
-	25, // 34: graft.v1.GraftService.DiscoverCommands:input_type -> graft.v1.DiscoverCommandsRequest
-	28, // 35: graft.v1.GraftService.UpdateConnectionRoots:input_type -> graft.v1.UpdateConnectionRootsRequest
-	30, // 36: graft.v1.GraftService.GetConnectionAvailableCommands:input_type -> graft.v1.GetConnectionAvailableCommandsRequest
-	32, // 37: graft.v1.GraftService.UpdateConnectionForwardCommands:input_type -> graft.v1.UpdateConnectionForwardCommandsRequest
-	34, // 38: graft.v1.GraftService.RemoveConnectionForwardCommands:input_type -> graft.v1.RemoveConnectionForwardCommandsRequest
-	36, // 39: graft.v1.GraftService.SyncFilesToConnection:input_type -> graft.v1.SyncFilesToConnectionRequest
-	40, // 40: graft.v1.GraftService.DumpLogs:input_type -> graft.v1.DumpLogsRequest
-	38, // 41: graft.v1.GraftService.SyncFilesToConnectionProtocol:input_type -> graft.v1.SyncFilesToConnectionProtocolRequest
-	42, // 42: graft.v1.GraftService.ForwardSSHAgent:input_type -> graft.v1.ForwardSSHAgentRequest
-	62, // 43: graft.v1.GraftService.WatchPorts:input_type -> graft.v1.WatchPortsRequest
-	64, // 44: graft.v1.GraftService.ForwardPort:input_type -> graft.v1.ForwardPortRequest
-	70, // 45: graft.v1.GraftService.AddPortForwards:input_type -> graft.v1.AddPortForwardsRequest
-	72, // 46: graft.v1.GraftService.RemovePortForwards:input_type -> graft.v1.RemovePortForwardsRequest
-	44, // 47: graft.v1.GraftService.SessionReportCWD:input_type -> graft.v1.SessionReportCWDRequest
-	46, // 48: graft.v1.GraftService.SessionWhich:input_type -> graft.v1.SessionWhichRequest
-	53, // 49: graft.v1.GraftService.SessionShimmedCommands:input_type -> graft.v1.SessionShimmedCommandsRequest
-	48, // 50: graft.v1.GraftService.SessionSelectConnection:input_type -> graft.v1.SessionSelectConnectionRequest
-	67, // 51: graft.v1.GraftService.SessionPinConnection:input_type -> graft.v1.SessionPinConnectionRequest
-	58, // 52: graft.v1.GraftService.RunCommand:input_type -> graft.v1.RunCommandRequest
-	3,  // 53: graft.v1.GraftService.Status:output_type -> graft.v1.StatusResponse
-	5,  // 54: graft.v1.GraftService.Ping:output_type -> graft.v1.PingResponse
-	7,  // 55: graft.v1.GraftService.Shutdown:output_type -> graft.v1.ShutdownResponse
-	9,  // 56: graft.v1.GraftService.Restart:output_type -> graft.v1.RestartResponse
-	11, // 57: graft.v1.GraftService.OOBMessages:output_type -> graft.v1.OOBMessagesResponse
-	18, // 58: graft.v1.GraftService.ListConnections:output_type -> graft.v1.ListConnectionsResponse
-	20, // 59: graft.v1.GraftService.InitializeSSHConnection:output_type -> graft.v1.InitializeSSHConnectionResponse
-	22, // 60: graft.v1.GraftService.InitializeContainerConnection:output_type -> graft.v1.InitializeContainerConnectionResponse
-	24, // 61: graft.v1.GraftService.RemoveConnection:output_type -> graft.v1.RemoveConnectionResponse
-	27, // 62: graft.v1.GraftService.DiscoverCommands:output_type -> graft.v1.DiscoverCommandsResponse
-	29, // 63: graft.v1.GraftService.UpdateConnectionRoots:output_type -> graft.v1.UpdateConnectionRootsResponse
-	31, // 64: graft.v1.GraftService.GetConnectionAvailableCommands:output_type -> graft.v1.GetConnectionAvailableCommandsResponse
-	33, // 65: graft.v1.GraftService.UpdateConnectionForwardCommands:output_type -> graft.v1.UpdateConnectionForwardCommandsResponse
-	35, // 66: graft.v1.GraftService.RemoveConnectionForwardCommands:output_type -> graft.v1.RemoveConnectionForwardCommandsResponse
-	37, // 67: graft.v1.GraftService.SyncFilesToConnection:output_type -> graft.v1.SyncFilesToConnectionResponse
-	41, // 68: graft.v1.GraftService.DumpLogs:output_type -> graft.v1.DumpLogsResponse
-	39, // 69: graft.v1.GraftService.SyncFilesToConnectionProtocol:output_type -> graft.v1.SyncFilesToConnectionProtocolResponse
-	43, // 70: graft.v1.GraftService.ForwardSSHAgent:output_type -> graft.v1.ForwardSSHAgentResponse
-	63, // 71: graft.v1.GraftService.WatchPorts:output_type -> graft.v1.WatchPortsResponse
-	66, // 72: graft.v1.GraftService.ForwardPort:output_type -> graft.v1.ForwardPortResponse
-	71, // 73: graft.v1.GraftService.AddPortForwards:output_type -> graft.v1.AddPortForwardsResponse
-	73, // 74: graft.v1.GraftService.RemovePortForwards:output_type -> graft.v1.RemovePortForwardsResponse
-	45, // 75: graft.v1.GraftService.SessionReportCWD:output_type -> graft.v1.SessionReportCWDResponse
-	47, // 76: graft.v1.GraftService.SessionWhich:output_type -> graft.v1.SessionWhichResponse
-	54, // 77: graft.v1.GraftService.SessionShimmedCommands:output_type -> graft.v1.SessionShimmedCommandsResponse
-	50, // 78: graft.v1.GraftService.SessionSelectConnection:output_type -> graft.v1.SessionSelectConnectionResponse
-	68, // 79: graft.v1.GraftService.SessionPinConnection:output_type -> graft.v1.SessionPinConnectionResponse
-	60, // 80: graft.v1.GraftService.RunCommand:output_type -> graft.v1.RunCommandResponse
-	53, // [53:81] is the sub-list for method output_type
-	25, // [25:53] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	16, // 6: graft.v1.ConnectionStatus.sync_statuses:type_name -> graft.v1.SyncStatus
+	85, // 7: graft.v1.ConnectionStatus.port_forward_statuses:type_name -> graft.v1.PortForwardStatus
+	86, // 8: graft.v1.ListConnectionsResponse.connections:type_name -> graft.v1.ListConnectionsResponse.ConnectionsEntry
+	87, // 9: graft.v1.DiscoverCommandsResponse.commands_by_directory:type_name -> graft.v1.DiscoverCommandsResponse.CommandsByDirectoryEntry
+	50, // 10: graft.v1.SessionSelectConnectionResponse.path_remappings:type_name -> graft.v1.PathRemapping
+	52, // 11: graft.v1.CommandForwardings.commands:type_name -> graft.v1.CommandForwarding
+	88, // 12: graft.v1.SessionShimmedCommandsResponse.destination_commands:type_name -> graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntry
+	1,  // 13: graft.v1.StartCommand.persistence:type_name -> graft.v1.CommandPersistence
+	56, // 14: graft.v1.RunCommandRequest.start:type_name -> graft.v1.StartCommand
+	58, // 15: graft.v1.RunCommandRequest.env_var:type_name -> graft.v1.SetEnvVar
+	59, // 16: graft.v1.RunCommandRequest.window_change:type_name -> graft.v1.WindowChange
+	57, // 17: graft.v1.RunCommandRequest.attach:type_name -> graft.v1.AttachCommand
+	60, // 18: graft.v1.RunCommandRequest.ack:type_name -> graft.v1.CommandAck
+	1,  // 19: graft.v1.CommandStarted.persistence:type_name -> graft.v1.CommandPersistence
+	1,  // 20: graft.v1.CommandAttached.persistence:type_name -> graft.v1.CommandPersistence
+	62, // 21: graft.v1.RunCommandResponse.started:type_name -> graft.v1.CommandStarted
+	63, // 22: graft.v1.RunCommandResponse.attached:type_name -> graft.v1.CommandAttached
+	1,  // 23: graft.v1.CommandInfo.persistence:type_name -> graft.v1.CommandPersistence
+	65, // 24: graft.v1.ListCommandsResponse.commands:type_name -> graft.v1.CommandInfo
+	72, // 25: graft.v1.WatchPortsResponse.ports:type_name -> graft.v1.PortInfo
+	76, // 26: graft.v1.ForwardPortRequest.start:type_name -> graft.v1.ForwardPortStart
+	80, // 27: graft.v1.AddPortForwardsRequest.ports:type_name -> graft.v1.ExplicitPortForwardSpec
+	80, // 28: graft.v1.RemovePortForwardsRequest.ports:type_name -> graft.v1.ExplicitPortForwardSpec
+	80, // 29: graft.v1.RemovePortForwardsResponse.auto_detected_ports:type_name -> graft.v1.ExplicitPortForwardSpec
+	17, // 30: graft.v1.ListConnectionsResponse.ConnectionsEntry.value:type_name -> graft.v1.ConnectionStatus
+	27, // 31: graft.v1.DiscoverCommandsResponse.CommandsByDirectoryEntry.value:type_name -> graft.v1.DiscoveredCommands
+	53, // 32: graft.v1.SessionShimmedCommandsResponse.DestinationCommandsEntry.value:type_name -> graft.v1.CommandForwardings
+	3,  // 33: graft.v1.GraftService.Status:input_type -> graft.v1.StatusRequest
+	5,  // 34: graft.v1.GraftService.Ping:input_type -> graft.v1.PingRequest
+	7,  // 35: graft.v1.GraftService.Shutdown:input_type -> graft.v1.ShutdownRequest
+	9,  // 36: graft.v1.GraftService.Restart:input_type -> graft.v1.RestartRequest
+	11, // 37: graft.v1.GraftService.OOBMessages:input_type -> graft.v1.OOBMessagesRequest
+	18, // 38: graft.v1.GraftService.ListConnections:input_type -> graft.v1.ListConnectionsRequest
+	20, // 39: graft.v1.GraftService.InitializeSSHConnection:input_type -> graft.v1.InitializeSSHConnectionRequest
+	22, // 40: graft.v1.GraftService.InitializeContainerConnection:input_type -> graft.v1.InitializeContainerConnectionRequest
+	24, // 41: graft.v1.GraftService.RemoveConnection:input_type -> graft.v1.RemoveConnectionRequest
+	26, // 42: graft.v1.GraftService.DiscoverCommands:input_type -> graft.v1.DiscoverCommandsRequest
+	29, // 43: graft.v1.GraftService.UpdateConnectionRoots:input_type -> graft.v1.UpdateConnectionRootsRequest
+	31, // 44: graft.v1.GraftService.GetConnectionAvailableCommands:input_type -> graft.v1.GetConnectionAvailableCommandsRequest
+	33, // 45: graft.v1.GraftService.UpdateConnectionForwardCommands:input_type -> graft.v1.UpdateConnectionForwardCommandsRequest
+	35, // 46: graft.v1.GraftService.RemoveConnectionForwardCommands:input_type -> graft.v1.RemoveConnectionForwardCommandsRequest
+	37, // 47: graft.v1.GraftService.SyncFilesToConnection:input_type -> graft.v1.SyncFilesToConnectionRequest
+	41, // 48: graft.v1.GraftService.DumpLogs:input_type -> graft.v1.DumpLogsRequest
+	39, // 49: graft.v1.GraftService.SyncFilesToConnectionProtocol:input_type -> graft.v1.SyncFilesToConnectionProtocolRequest
+	43, // 50: graft.v1.GraftService.ForwardSSHAgent:input_type -> graft.v1.ForwardSSHAgentRequest
+	73, // 51: graft.v1.GraftService.WatchPorts:input_type -> graft.v1.WatchPortsRequest
+	75, // 52: graft.v1.GraftService.ForwardPort:input_type -> graft.v1.ForwardPortRequest
+	81, // 53: graft.v1.GraftService.AddPortForwards:input_type -> graft.v1.AddPortForwardsRequest
+	83, // 54: graft.v1.GraftService.RemovePortForwards:input_type -> graft.v1.RemovePortForwardsRequest
+	45, // 55: graft.v1.GraftService.SessionReportCWD:input_type -> graft.v1.SessionReportCWDRequest
+	47, // 56: graft.v1.GraftService.SessionWhich:input_type -> graft.v1.SessionWhichRequest
+	54, // 57: graft.v1.GraftService.SessionShimmedCommands:input_type -> graft.v1.SessionShimmedCommandsRequest
+	49, // 58: graft.v1.GraftService.SessionSelectConnection:input_type -> graft.v1.SessionSelectConnectionRequest
+	78, // 59: graft.v1.GraftService.SessionPinConnection:input_type -> graft.v1.SessionPinConnectionRequest
+	61, // 60: graft.v1.GraftService.RunCommand:input_type -> graft.v1.RunCommandRequest
+	66, // 61: graft.v1.GraftService.ListCommands:input_type -> graft.v1.ListCommandsRequest
+	68, // 62: graft.v1.GraftService.KillCommand:input_type -> graft.v1.KillCommandRequest
+	70, // 63: graft.v1.GraftService.DetachCommand:input_type -> graft.v1.DetachCommandRequest
+	4,  // 64: graft.v1.GraftService.Status:output_type -> graft.v1.StatusResponse
+	6,  // 65: graft.v1.GraftService.Ping:output_type -> graft.v1.PingResponse
+	8,  // 66: graft.v1.GraftService.Shutdown:output_type -> graft.v1.ShutdownResponse
+	10, // 67: graft.v1.GraftService.Restart:output_type -> graft.v1.RestartResponse
+	12, // 68: graft.v1.GraftService.OOBMessages:output_type -> graft.v1.OOBMessagesResponse
+	19, // 69: graft.v1.GraftService.ListConnections:output_type -> graft.v1.ListConnectionsResponse
+	21, // 70: graft.v1.GraftService.InitializeSSHConnection:output_type -> graft.v1.InitializeSSHConnectionResponse
+	23, // 71: graft.v1.GraftService.InitializeContainerConnection:output_type -> graft.v1.InitializeContainerConnectionResponse
+	25, // 72: graft.v1.GraftService.RemoveConnection:output_type -> graft.v1.RemoveConnectionResponse
+	28, // 73: graft.v1.GraftService.DiscoverCommands:output_type -> graft.v1.DiscoverCommandsResponse
+	30, // 74: graft.v1.GraftService.UpdateConnectionRoots:output_type -> graft.v1.UpdateConnectionRootsResponse
+	32, // 75: graft.v1.GraftService.GetConnectionAvailableCommands:output_type -> graft.v1.GetConnectionAvailableCommandsResponse
+	34, // 76: graft.v1.GraftService.UpdateConnectionForwardCommands:output_type -> graft.v1.UpdateConnectionForwardCommandsResponse
+	36, // 77: graft.v1.GraftService.RemoveConnectionForwardCommands:output_type -> graft.v1.RemoveConnectionForwardCommandsResponse
+	38, // 78: graft.v1.GraftService.SyncFilesToConnection:output_type -> graft.v1.SyncFilesToConnectionResponse
+	42, // 79: graft.v1.GraftService.DumpLogs:output_type -> graft.v1.DumpLogsResponse
+	40, // 80: graft.v1.GraftService.SyncFilesToConnectionProtocol:output_type -> graft.v1.SyncFilesToConnectionProtocolResponse
+	44, // 81: graft.v1.GraftService.ForwardSSHAgent:output_type -> graft.v1.ForwardSSHAgentResponse
+	74, // 82: graft.v1.GraftService.WatchPorts:output_type -> graft.v1.WatchPortsResponse
+	77, // 83: graft.v1.GraftService.ForwardPort:output_type -> graft.v1.ForwardPortResponse
+	82, // 84: graft.v1.GraftService.AddPortForwards:output_type -> graft.v1.AddPortForwardsResponse
+	84, // 85: graft.v1.GraftService.RemovePortForwards:output_type -> graft.v1.RemovePortForwardsResponse
+	46, // 86: graft.v1.GraftService.SessionReportCWD:output_type -> graft.v1.SessionReportCWDResponse
+	48, // 87: graft.v1.GraftService.SessionWhich:output_type -> graft.v1.SessionWhichResponse
+	55, // 88: graft.v1.GraftService.SessionShimmedCommands:output_type -> graft.v1.SessionShimmedCommandsResponse
+	51, // 89: graft.v1.GraftService.SessionSelectConnection:output_type -> graft.v1.SessionSelectConnectionResponse
+	79, // 90: graft.v1.GraftService.SessionPinConnection:output_type -> graft.v1.SessionPinConnectionResponse
+	64, // 91: graft.v1.GraftService.RunCommand:output_type -> graft.v1.RunCommandResponse
+	67, // 92: graft.v1.GraftService.ListCommands:output_type -> graft.v1.ListCommandsResponse
+	69, // 93: graft.v1.GraftService.KillCommand:output_type -> graft.v1.KillCommandResponse
+	71, // 94: graft.v1.GraftService.DetachCommand:output_type -> graft.v1.DetachCommandResponse
+	64, // [64:95] is the sub-list for method output_type
+	33, // [33:64] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_graft_v1_graft_proto_init() }
@@ -4794,20 +5671,23 @@ func file_graft_v1_graft_proto_init() {
 	file_graft_v1_graft_proto_msgTypes[0].OneofWrappers = []any{}
 	file_graft_v1_graft_proto_msgTypes[1].OneofWrappers = []any{}
 	file_graft_v1_graft_proto_msgTypes[15].OneofWrappers = []any{}
-	file_graft_v1_graft_proto_msgTypes[57].OneofWrappers = []any{
+	file_graft_v1_graft_proto_msgTypes[59].OneofWrappers = []any{
 		(*RunCommandRequest_Start)(nil),
 		(*RunCommandRequest_Stdin)(nil),
 		(*RunCommandRequest_Signal)(nil),
 		(*RunCommandRequest_EnvVar)(nil),
 		(*RunCommandRequest_WindowChange)(nil),
+		(*RunCommandRequest_Attach)(nil),
+		(*RunCommandRequest_Ack)(nil),
 	}
-	file_graft_v1_graft_proto_msgTypes[59].OneofWrappers = []any{
+	file_graft_v1_graft_proto_msgTypes[62].OneofWrappers = []any{
 		(*RunCommandResponse_Stdout)(nil),
 		(*RunCommandResponse_Stderr)(nil),
 		(*RunCommandResponse_ExitStatus)(nil),
 		(*RunCommandResponse_Started)(nil),
+		(*RunCommandResponse_Attached)(nil),
 	}
-	file_graft_v1_graft_proto_msgTypes[63].OneofWrappers = []any{
+	file_graft_v1_graft_proto_msgTypes[73].OneofWrappers = []any{
 		(*ForwardPortRequest_Start)(nil),
 		(*ForwardPortRequest_Payload)(nil),
 	}
@@ -4816,8 +5696,8 @@ func file_graft_v1_graft_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_graft_v1_graft_proto_rawDesc), len(file_graft_v1_graft_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   77,
+			NumEnums:      2,
+			NumMessages:   87,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -125,6 +125,16 @@ func (c *testRemoteDaemonConn) Close() error                 { return errors.Wra
 func startTestRemoteDaemon(t *testing.T) string {
 	t.Helper()
 
+	sockPath, _ := startTestRemoteDaemonWithServer(t)
+
+	return sockPath
+}
+
+// startTestRemoteDaemonWithServer is startTestRemoteDaemon but also exposes
+// the server so tests can tune internals (e.g. registry kill delays).
+func startTestRemoteDaemonWithServer(t *testing.T) (string, *Server) {
+	t.Helper()
+
 	// Use a short temp dir path to stay within macOS's 104-byte Unix socket path limit.
 	tmpDir, err := os.MkdirTemp("/tmp", "st-") //nolint:usetesting // t.TempDir path too long for Unix socket
 	test.That(t, err, test.ShouldBeNil)
@@ -143,7 +153,7 @@ func startTestRemoteDaemon(t *testing.T) string {
 	sockPath, err := DaemonSocketPathForCurrentHost(ServerRoleRemote)
 	test.That(t, err, test.ShouldBeNil)
 
-	return sockPath
+	return sockPath, srv
 }
 
 // connectToTestDaemon creates a gRPC client connection to the daemon at sockPath.

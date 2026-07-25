@@ -9,6 +9,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 
 	"github.com/go-errors/errors"
 	"google.golang.org/grpc/status"
@@ -49,6 +50,10 @@ func New(e string) ErrorLike {
 // parameter indicates how far up the stack to start the stacktrace. 0 is from
 // the current call, 1 from its caller, etc.
 func Wrap(e any) ErrorLike {
+	if isNil(e) {
+		return nil
+	}
+
 	// TODO(erd): Verify that skip=1 produces correct caller info for wrapped errors.
 	return handleGRPCStatus(e, errors.Wrap(e, 1))
 }
@@ -61,6 +66,10 @@ func Wrap(e any) ErrorLike {
 // stacktrace use Errorf. The prefix parameter is used to add a prefix to the
 // error message when calling Error().
 func WrapPrefix(e any, prefix string) ErrorLike {
+	if isNil(e) {
+		return nil
+	}
+
 	return handleGRPCStatus(e, errors.WrapPrefix(e, prefix, 1))
 }
 
@@ -72,6 +81,10 @@ func WrapPrefix(e any, prefix string) ErrorLike {
 // stacktrace use Errorf. The suffix parameter is used to add a suffix to the
 // error message when calling Error().
 func WrapSuffix(e error, suffix string) ErrorLike {
+	if isNil(e) {
+		return nil
+	}
+
 	return handleGRPCStatus(e, errors.Wrap(fmt.Errorf("%w: %s", e, suffix), 1))
 }
 
@@ -210,6 +223,13 @@ func (err wrappedGRPCStatusError) GRPCStatus() *status.Status {
 }
 
 func handleGRPCStatus(original any, wrapped *Error) error {
+	if wrapped == nil {
+		// Returning a typed-nil *Error through the error interface would
+		// evade every `err != nil` guard and later panic anything that walks
+		// the Unwrap chain (e.g. grpc's status.FromError).
+		return nil
+	}
+
 	if err, ok := original.(error); ok {
 		if s, ok := status.FromError(err); ok {
 			return wrappedGRPCStatusError{wrapped, s}
@@ -217,4 +237,22 @@ func handleGRPCStatus(original any, wrapped *Error) error {
 	}
 
 	return wrapped
+}
+
+// isNil reports whether the value is nil, including a typed-nil pointer
+// hiding inside a non-nil interface.
+func isNil(e any) bool {
+	if e == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(e)
+
+	k := v.Kind()
+	if k == reflect.Pointer || k == reflect.Interface || k == reflect.Map ||
+		k == reflect.Slice || k == reflect.Func || k == reflect.Chan {
+		return v.IsNil()
+	}
+
+	return false
 }

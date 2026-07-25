@@ -14,7 +14,7 @@ var (
 )
 
 var runCmd = &cobra.Command{
-	Use:                "run [-t <connection>] [-m <pattern>] <command> [args...]",
+	Use:                "run [-t <connection>] [-m <pattern>] [-d] <command> [args...]",
 	Short:              "Run a command on a remote connection",
 	DisableFlagParsing: true,
 	ValidArgsFunction:  completeRunArgs,
@@ -29,6 +29,22 @@ var runCmd = &cobra.Command{
 
 		client, ctx := newClient(cmd.Context(), cmd, args, false)
 		defer client.Close()
+
+		if ra.detach {
+			if ra.match != "" {
+				return cliExit(cmd, args, errors.New("--detach cannot be combined with --match"), 1)
+			}
+
+			if detachErr := client.RunCommandDetached(ctx, ra.command[0], ra.command[1:], ra.to, ra.pty); detachErr != nil {
+				return cliExit(cmd, args, detachErr, 1)
+			}
+
+			return cliExit(cmd, args, "", 0)
+		}
+
+		if ra.pty {
+			return cliExit(cmd, args, errors.New("--pty requires --detach"), 1)
+		}
 
 		var exitCode int
 		if ra.match != "" {
@@ -64,6 +80,8 @@ func completeRunArgs(cmd *cobra.Command, args []string, toComplete string) ([]st
 type runArgs struct {
 	to      string
 	match   string
+	detach  bool
+	pty     bool
 	command []string
 }
 
@@ -120,6 +138,20 @@ func parseRunArgs(args []string) (runArgs, bool, error) {
 
 		if strings.HasPrefix(arg, "--match=") {
 			ra.match = arg[len("--match="):]
+			i++
+
+			continue
+		}
+
+		if arg == "--detach" || arg == "-d" {
+			ra.detach = true
+			i++
+
+			continue
+		}
+
+		if arg == "--pty" {
+			ra.pty = true
 			i++
 
 			continue

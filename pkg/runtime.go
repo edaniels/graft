@@ -21,6 +21,25 @@ const (
 	// SignalTerminate is the canonical signal name used to terminate a process. This is distinct
 	// from killing a process which typically doesn't give the process a chance to gracefully shutdown.
 	SignalTerminate = "SIGTERM"
+
+	// SignalKill is the canonical signal name used to forcibly kill a process.
+	SignalKill = "SIGKILL"
+
+	// SignalInterrupt is the canonical signal name used to interrupt a process.
+	SignalInterrupt = "SIGINT"
+
+	// SignalHangup is the canonical signal name used to tell a process its controlling
+	// terminal went away.
+	SignalHangup = "SIGHUP"
+
+	// SignalQuit is the canonical signal name for SIGQUIT.
+	SignalQuit = "SIGQUIT"
+
+	// SignalUser1 is the canonical signal name for SIGUSR1.
+	SignalUser1 = "SIGUSR1"
+
+	// SignalUser2 is the canonical signal name for SIGUSR2.
+	SignalUser2 = "SIGUSR2"
 )
 
 // DumpGoroutines prints all goroutine traces to stderr.

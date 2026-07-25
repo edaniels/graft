@@ -89,6 +89,14 @@ func TestKillDaemonByPIDFileLiveProcess(t *testing.T) {
 }
 
 func TestKillDaemonByPIDFileSIGTERMResistant(t *testing.T) {
+	// The production SIGTERM window is generous (it covers a daemon
+	// gracefully terminating its managed commands); shorten it so the test
+	// exercises the SIGKILL escalation quickly.
+	oldWait := replaceSIGTERMWait
+	replaceSIGTERMWait = 500 * time.Millisecond
+
+	t.Cleanup(func() { replaceSIGTERMWait = oldWait })
+
 	dir := t.TempDir()
 	readyPath := filepath.Join(dir, "ready")
 

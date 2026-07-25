@@ -35,6 +35,7 @@ type Server struct {
 	rootConfig             *RootConfig
 	connMgr                *ConnectionManager
 	sessMgr                *SessionManager
+	cmdRegistry            *CommandRegistry
 	grpcSrv                *grpc.Server
 	oobListeners           map[*oobListener]struct{}
 	rootConfigPath         string
@@ -166,11 +167,19 @@ func NewServer(
 				strings.Join(argsClone, " ") + " if needed)")
 	}
 
+	// Remote daemons own the commands they spawn; commands.json records the
+	// running set so a fresh daemon can clean up after a crashed predecessor.
+	var cmdRegistry *CommandRegistry
+	if role == ServerRoleRemote {
+		cmdRegistry = NewCommandRegistry(filepath.Join(sockDir, "commands.json"))
+	}
+
 	server := &Server{
 		role:           role,
 		identity:       identity,
 		connMgr:        connMgr,
 		sessMgr:        sessMgr,
+		cmdRegistry:    cmdRegistry,
 		envProviders:   envProviders,
 		rootConfig:     config,
 		rootConfigPath: rootConfigPath,
@@ -207,6 +216,15 @@ func (srv *Server) Run(runCtx context.Context) error {
 
 	srv.runCtx = runCtx
 	srv.serverMu.Unlock()
+
+	if srv.role == ServerRoleRemote {
+		// Clean up command groups a previous daemon incarnation left behind,
+		// then periodically forget exited commands nobody re-attached to.
+		srv.cmdRegistry.ReconcileStale()
+		srv.activeWorkers.Go(func() {
+			srv.commandReapLoop(runCtx)
+		})
+	}
 
 	if srv.role == ServerRoleLocal {
 		srv.activeWorkers.Go(func() {
@@ -250,6 +268,31 @@ func (srv *Server) Run(runCtx context.Context) error {
 	})
 
 	return nil
+}
+
+const (
+	// commandReapInterval is how often exited, unattached managed commands
+	// are considered for forgetting.
+	commandReapInterval = time.Minute
+	// commandReapTTL is how long an exited, unattached managed command stays
+	// listed for a late attach before being forgotten.
+	commandReapTTL = 10 * time.Minute
+)
+
+// commandReapLoop periodically forgets exited managed commands nobody
+// re-attached to.
+func (srv *Server) commandReapLoop(runCtx context.Context) {
+	ticker := time.NewTicker(commandReapInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-ticker.C:
+			srv.cmdRegistry.ReapExited(commandReapTTL)
+		}
+	}
 }
 
 // restore is a critical step of server startup. All connections specified in the config are reestablished here.
@@ -805,6 +848,13 @@ func (srv *Server) Close() {
 
 	if srv.sessMgr != nil {
 		srv.sessMgr.Close()
+	}
+
+	// Terminate managed commands before stopping gRPC so attached streams can
+	// still observe exit statuses. With no daemon to drain or re-attach them,
+	// surviving commands would only be orphans.
+	if srv.cmdRegistry != nil {
+		srv.cmdRegistry.CloseAll()
 	}
 
 	srv.grpcSrv.Stop()

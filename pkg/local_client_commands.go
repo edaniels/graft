@@ -17,6 +17,8 @@ import (
 
 	"github.com/fatih/color"
 	"golang.org/x/term"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/edaniels/graft/errors"
@@ -625,6 +627,8 @@ type RunCommandOptions struct {
 
 	ExactCommand bool // Is this exact command to send to the inferred connection without prefix/forward matching?
 	WithSudo     bool // Run as sudo (root)
+	Detach       bool // Start the command kept-alive and return once started, printing its command ID
+	ForcePty     bool // Allocate a pty for a detached command (for later interactive attach)
 }
 
 // RunCommand runs an explicitly provided command (e.g. graft cmd blah).
@@ -831,6 +835,29 @@ func (pw *prefixWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// RunCommandDetached starts a command that keeps running with no client
+// attached and prints its command ID for later `graft attach`/`graft kill`.
+func (client *LocalClient) RunCommandDetached(
+	ctx context.Context,
+	command string,
+	arguments []string,
+	connectionName string,
+	forcePty bool,
+) error {
+	_, err := client.runCommand(ctx, RunCommandOptions{
+		ConnectionName: connectionName,
+		CallerPID:      client.ppid,
+		CWD:            client.cwd,
+		Command:        command,
+		Arguments:      arguments,
+		ExactCommand:   true,
+		Detach:         true,
+		ForcePty:       forcePty,
+	})
+
+	return err
+}
+
 // RunShimmedCommand runs a command caught by the shimming shell interface.
 func (client *LocalClient) RunShimmedCommand(
 	ctx context.Context,
@@ -870,16 +897,19 @@ func (client *LocalClient) RemoteShell(
 // RunCommandGRPCClientHandler processes a running command on the client side of a RunCommand. That means
 // the [RunningCommand] is coming from a remote daemon.
 type RunCommandGRPCClientHandler struct {
-	stdin         io.Writer
-	stdout        io.Reader
-	stderr        io.Reader
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
 	runningCmd    RunningCommand
 	outputWriters sync.WaitGroup
 }
 
 func (h *RunCommandGRPCClientHandler) Handle(ctx context.Context) (int, error) {
 	sigWinChChan := make(chan os.Signal, 1)
+	// Stop must precede close: a SIGWINCH delivered after close would panic
+	// the signal dispatcher with a send on a closed channel.
 	defer close(sigWinChChan)
+	defer signal.Stop(sigWinChChan)
 
 	signal.Notify(sigWinChChan, syscall.SIGWINCH)
 
@@ -898,10 +928,28 @@ func (h *RunCommandGRPCClientHandler) Handle(ctx context.Context) (int, error) {
 
 	sigWinChChan <- syscall.SIGWINCH
 
+	// Forward signals to the remote command instead of dying with a
+	// half-finished stream: signaling an attached graft process should signal
+	// the command, like a local foreground process. SIGTERM is forwarded but
+	// also ends this handler so the CLI itself remains killable; SIGHUP (the
+	// terminal went away) detaches without forwarding - hanging up a kept
+	// command would defeat its persistence.
+	terminated := make(chan int, 1)
+
+	sigForwardChan := make(chan os.Signal, 4)
+	defer close(sigForwardChan)
+	defer signal.Stop(sigForwardChan)
+
+	signal.Notify(sigForwardChan,
+		syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP,
+		syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+
+	go forwardSignalsToCommand(ctx, h.runningCmd, sigForwardChan, terminated)
+
 	go func() {
 		defer h.runningCmd.Stdin().Close()
 
-		if _, err := io.Copy(h.runningCmd.Stdin(), os.Stdin); err != nil {
+		if _, err := io.Copy(h.runningCmd.Stdin(), h.stdin); err != nil {
 			slog.ErrorContext(ctx, "error copying stdin", "error", err)
 		}
 	}()
@@ -909,17 +957,36 @@ func (h *RunCommandGRPCClientHandler) Handle(ctx context.Context) (int, error) {
 	defer h.outputWriters.Wait()
 
 	h.outputWriters.Go(func() {
-		if _, err := io.Copy(os.Stdout, h.runningCmd.Stdout()); err != nil {
+		if _, err := io.Copy(h.stdout, h.runningCmd.Stdout()); err != nil {
 			slog.ErrorContext(ctx, "error copying stdout", "error", err)
 		}
 	})
 	h.outputWriters.Go(func() {
-		if _, err := io.Copy(os.Stderr, h.runningCmd.Stderr()); err != nil {
+		if _, err := io.Copy(h.stderr, h.runningCmd.Stderr()); err != nil {
 			slog.ErrorContext(ctx, "error copying stderr", "error", err)
 		}
 	})
 
-	waitStatus, waitErr := h.runningCmd.Wait()
+	type waitResult struct {
+		status int
+		err    error
+	}
+
+	waitCh := make(chan waitResult, 1)
+
+	go func() {
+		status, waitErr := h.runningCmd.Wait()
+		waitCh <- waitResult{status, waitErr}
+	}()
+
+	var res waitResult
+
+	select {
+	case res = <-waitCh:
+	case code := <-terminated:
+		// SIGTERM/SIGHUP: the client is going away; don't wait for the command.
+		return code, nil
+	}
 
 	// unblock anything waiting on stdin
 	h.runningCmd.Stdin().Close()
@@ -927,18 +994,65 @@ func (h *RunCommandGRPCClientHandler) Handle(ctx context.Context) (int, error) {
 	// wait to process stdout/err
 	h.outputWriters.Wait()
 
-	if waitErr != nil {
-		return -1, errors.Wrap(waitErr)
+	if res.err != nil {
+		return -1, errors.Wrap(res.err)
 	}
 
-	return waitStatus, nil
+	return res.status, nil
+}
+
+// forwardSignalsToCommand relays signals to the running command so that
+// signaling an attached graft process behaves like signaling a local
+// foreground process. Two signals additionally end the local wait (reported
+// via terminated as an exit code): SIGTERM, so the CLI itself stays killable,
+// and SIGHUP, which is never forwarded - the terminal going away is a detach,
+// and hanging up a kept command would defeat its persistence.
+func forwardSignalsToCommand(
+	ctx context.Context,
+	runningCmd RunningCommand,
+	sigs <-chan os.Signal,
+	terminated chan<- int,
+) {
+	notifyTerminated := func(code int) {
+		select {
+		case terminated <- code:
+		default:
+		}
+	}
+
+	forward := func(name string) {
+		if err := runningCmd.Signal(name); err != nil {
+			slog.DebugContext(ctx, "error forwarding signal", "signal", name, "error", err)
+		}
+	}
+
+	for sig := range sigs {
+		switch sig {
+		case syscall.SIGINT:
+			forward(SignalInterrupt)
+		case syscall.SIGQUIT:
+			forward(SignalQuit)
+		case syscall.SIGUSR1:
+			forward(SignalUser1)
+		case syscall.SIGUSR2:
+			forward(SignalUser2)
+		case syscall.SIGTERM:
+			forward(SignalTerminate)
+			notifyTerminated(143) //nolint:mnd // conventional 128+SIGTERM
+		case syscall.SIGHUP:
+			notifyTerminated(129) //nolint:mnd // conventional 128+SIGHUP
+		}
+	}
 }
 
 func (client *LocalClient) runCommand(
 	ctx context.Context,
 	opts RunCommandOptions,
 ) (int, error) {
-	runClient, err := client.GraftServiceClient.RunCommand(ctx)
+	// The stream must not die on Ctrl-C: SIGINT is forwarded to the remote
+	// command (see Handle), so the CLI's signal-canceled context cannot be
+	// the stream's lifetime.
+	runClient, err := client.GraftServiceClient.RunCommand(context.WithoutCancel(ctx))
 	if err != nil {
 		return 0, client.handleError(err)
 	}
@@ -971,6 +1085,17 @@ func (client *LocalClient) runCommand(
 	// Only allocate a pty when both stdin and stdout are terminals.
 	// When output is piped, a pty causes spurious echo/padding artifacts.
 	allocatePty := stdinIsTerminal && stdoutIsTerminal
+
+	persistence := graftv1.CommandPersistence_COMMAND_PERSISTENCE_UNKNOWN
+
+	if opts.Detach {
+		// Detached commands outlive this client by definition. They run
+		// without a terminal unless one was explicitly requested for a later
+		// interactive attach.
+		allocatePty = opts.ForcePty
+		persistence = graftv1.CommandPersistence_COMMAND_PERSISTENCE_KEEP
+	}
+
 	startReq := &graftv1.RunCommandRequest_Start{
 		Start: &graftv1.StartCommand{
 			Pid:            opts.CallerPID,
@@ -988,6 +1113,7 @@ func (client *LocalClient) runCommand(
 			AllocatePty:    allocatePty,
 			RedirectStdout: true,
 			RedirectStderr: true,
+			Persistence:    persistence,
 		},
 	}
 	runCmdReq := &graftv1.RunCommandRequest{
@@ -1014,8 +1140,19 @@ func (client *LocalClient) runCommand(
 		return 0, errors.Wrap(err)
 	}
 
-	if _, ok := resp.GetData().(*graftv1.RunCommandResponse_Started); !ok {
+	started, ok := resp.GetData().(*graftv1.RunCommandResponse_Started)
+	if !ok {
 		return 0, errors.New("expected CommandStarted response from server")
+	}
+
+	if opts.Detach {
+		if started.Started.GetCommandId() == "" {
+			return 0, errors.New("daemon did not report a command id for the detached command")
+		}
+
+		fmt.Fprintln(client.outWriter, started.Started.GetCommandId())
+
+		return 0, nil
 	}
 
 	runningCmd := NewRemoteRunningCommand(runClient)
@@ -1044,7 +1181,17 @@ func (client *LocalClient) runCommand(
 		runningCmd: runningCmd,
 	}
 
-	return handler.Handle(ctx)
+	code, handleErr := handler.Handle(ctx)
+	if handleErr != nil && grpcstatus.Code(handleErr) == grpccodes.Aborted {
+		// The attachment was taken away (graft detach, or another client
+		// attached); the command itself keeps running. Raw mode may still be
+		// active, hence \r\n.
+		fmt.Fprint(os.Stderr, "\r\n[detached]\r\n")
+
+		return 0, nil
+	}
+
+	return code, handleErr
 }
 
 // ForwardCommands updates the commands to forward for the connection associated with the connection name.

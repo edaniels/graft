@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+// replaceSIGTERMWait is how long --replace waits for the old daemon to exit
+// after SIGTERM before escalating to SIGKILL. The window covers the old
+// daemon's worst-case orderly shutdown: terminating its managed commands
+// (kill grace + drain grace, both bounded) plus slack. Escalating too early
+// would SIGKILL it mid-cleanup and leave that work to the new daemon's
+// stale-command reconciliation. The wait polls, so a healthy daemon exits
+// well before the deadline. A variable for tests.
+var replaceSIGTERMWait = defaultKillGrace + defaultDrainGrace + 5*time.Second
+
 // killDaemonByPIDFile is a best-effort helper that reads a PID file, kills the
 // process identified by it, and removes the PID file. It is used during
 // --replace to terminate a previous daemon before taking over.
@@ -50,7 +59,7 @@ func killDaemonByPIDFile(pidPath string) {
 		return
 	}
 
-	if waitForProcessDeath(pid, 2*time.Second) {
+	if waitForProcessDeath(pid, replaceSIGTERMWait) {
 		os.Remove(pidPath)
 
 		return

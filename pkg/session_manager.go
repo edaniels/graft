@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/edaniels/graft/errors"
+	graftv1 "github.com/edaniels/graft/gen/proto/graft/v1"
 )
 
 const (
@@ -660,6 +661,9 @@ func (mgr *SessionManager) RunCommand(
 
 	// this redirects the stderr of a pty to the bidi command itself.
 	redirectStderr bool,
+
+	// lifetime behavior when the client stream disconnects.
+	persistence graftv1.CommandPersistence,
 ) (RunningCommand, error) {
 	if shell == (command != "") {
 		return nil, errors.New("can either start a shell or run a command")
@@ -731,6 +735,7 @@ func (mgr *SessionManager) RunCommand(
 		allocatePty,
 		redirectStdout,
 		redirectStderr,
+		persistence,
 	)
 	if err != nil {
 		return nil, errors.Wrap(err)

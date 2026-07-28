@@ -391,22 +391,39 @@ func (mgr *ConnectionManager) initialize(
 		return nil
 	})
 
-	var remoteRootModified bool
-	if remoteRoot == "" && willSync {
-		remoteRootModified = true
-		// e.g. graft connect user@server --sync
-		// TODO(erd): we should really just do synchronization here so that we don't calculate defaultSyncRemotePath
-		// in two places. It feels extraordinarily prone to bugs.
-		remoteRoot = defaultSyncRemotePath(daemon.HomeDir(), identity, localRoot)
-		if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
-			return nil, err
-		}
-	} else if strings.HasPrefix(conn.RemoteRoot(), "~/") {
-		remoteRootModified = true
+	if errors.Is(initErr, errDaemonSuperseded) {
+		merged := daemon.supersededBy
+		mgr.followSupersede(daemon, merged)
+		conn.updateDaemon(merged)
 
-		remoteRoot := filepath.Join(daemon.HomeDir(), conn.RemoteRoot()[2:])
-		if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
-			return nil, err
+		// The superseded daemon never finished initializing (ensureDaemon, which
+		// discovers HomeDir, is skipped when afterTransport returns an error), so
+		// root resolution below must use the merged daemon instead. Wait for the
+		// merged daemon's own initialization, which may still be in progress, so
+		// its discovered state (e.g. HomeDir) is populated before we rely on it.
+		daemon = merged
+		initErr = daemon.Initialize(ctx, nil)
+	}
+
+	var remoteRootModified bool
+
+	if initErr == nil && daemon.HomeDir() != "" {
+		if remoteRoot == "" && willSync {
+			remoteRootModified = true
+			// e.g. graft connect user@server --sync
+			// TODO(erd): we should really just do synchronization here so that we don't calculate defaultSyncRemotePath
+			// in two places. It feels extraordinarily prone to bugs.
+			remoteRoot = defaultSyncRemotePath(daemon.HomeDir(), identity, localRoot)
+			if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
+				return nil, err
+			}
+		} else if strings.HasPrefix(conn.RemoteRoot(), "~/") {
+			remoteRootModified = true
+
+			remoteRoot := filepath.Join(daemon.HomeDir(), conn.RemoteRoot()[2:])
+			if err := conn.SetRoots(localRoot, remoteRoot); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -416,11 +433,7 @@ func (mgr *ConnectionManager) initialize(
 		mgr.connMgrMu.Unlock()
 	}
 
-	if errors.Is(initErr, errDaemonSuperseded) {
-		merged := daemon.supersededBy
-		mgr.followSupersede(daemon, merged)
-		conn.updateDaemon(merged)
-	} else if initErr != nil {
+	if initErr != nil {
 		if destroyIfFail {
 			mgr.connMgrMu.Lock()
 			delete(mgr.connections, name)

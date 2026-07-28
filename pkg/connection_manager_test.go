@@ -590,6 +590,7 @@ func TestCreateConnection_EmptyRemoteRoot_WillSync(t *testing.T) {
 	// TODO(erd): we ought to mock this out better so as to not mess with internals
 	daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
 	daemon.runCtx = mgr.runCtx
+	daemon.homeDir = "/home/user"
 	daemon.setState(ConnectionStateConnected)
 	mgr.daemons[daemonKey(destURL, "ident")] = daemon
 
@@ -597,4 +598,60 @@ func TestCreateConnection_EmptyRemoteRoot_WillSync(t *testing.T) {
 	conn, initErr := mgr.Initialize(t.Context(), "myconn", destURL, "/local", "", "ident", false, willSync)
 	test.That(t, initErr, test.ShouldBeNil)
 	test.That(t, conn.RemoteRoot(), test.ShouldEqual, defaultSyncRemotePath(daemon.HomeDir(), "ident", "/local"))
+}
+
+// resolvingConnector simulates SSH config alias resolution: InitializeRemote rewrites
+// target in place (as sshConnector does to conn.destURL) to a different host, resolveTo.
+type resolvingConnector struct {
+	noopConnector
+
+	target    *url.URL
+	resolveTo *url.URL
+}
+
+func (c *resolvingConnector) InitializeRemote(_ context.Context) (bool, error) {
+	c.target.Host = c.resolveTo.Host
+	c.target.User = c.resolveTo.User
+
+	return true, nil
+}
+
+// TestConnectionManagerSupersedeResolvesRootsAgainstMergedDaemon covers a real bug: two
+// connections to the same physical host (e.g. via different SSH aliases) race during
+// connect/restore. One of them resolves its alias, mid-InitializeRemote, to the same
+// canonical host as an already-connected daemon and gets superseded (see
+// reassignDaemon). The superseded daemon's own initialization is aborted before
+// ensureDaemon runs, so its HomeDir is never populated. Root resolution (the "~/"
+// prefix case here) must use the merged, already-connected daemon's HomeDir - not the
+// superseded daemon's empty one - or a "~/"-prefixed remote root resolves to a bare
+// relative path (e.g. "proj" instead of "/home/user/proj"), which then makes every
+// remote command do `cd proj && ...` and fail with "No such file or directory".
+func TestConnectionManagerSupersedeResolvesRootsAgainstMergedDaemon(t *testing.T) {
+	mgr := NewConnectionManager(slog.LevelDebug)
+	defer mgr.Close()
+
+	mergedURL, err := url.Parse("ssh://user@resolved-host")
+	test.That(t, err, test.ShouldBeNil)
+
+	// Simulates a connection that already resolved to, and is fully connected to,
+	// the shared physical host.
+	merged := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+	merged.runCtx = mgr.runCtx
+	merged.mapKey = daemonKey(mergedURL, "")
+	merged.homeDir = "/home/user"
+	merged.setState(ConnectionStateConnected)
+	mgr.daemons[merged.mapKey] = merged
+
+	// "myconn" connects via a distinct alias that SSH config resolution rewrites,
+	// mid-InitializeRemote, to the same canonical host as "merged" - triggering the
+	// daemon-supersede path in reassignDaemon.
+	aliasURL, err := url.Parse("ssh://host-alias")
+	test.That(t, err, test.ShouldBeNil)
+
+	connector := &resolvingConnector{target: aliasURL, resolveTo: mergedURL}
+	mgr.RegisterConnectorFactory("ssh", &fakeConnectorFactory{connector: connector})
+
+	conn, initErr := mgr.Initialize(t.Context(), "myconn", aliasURL, "/Users/eric/proj", "~/proj", "", false, false)
+	test.That(t, initErr, test.ShouldBeNil)
+	test.That(t, conn.RemoteRoot(), test.ShouldEqual, "/home/user/proj")
 }

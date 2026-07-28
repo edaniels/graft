@@ -289,3 +289,45 @@ func TestDetachCommandRPC(t *testing.T) {
 	_, err = client.KillCommand(t.Context(), &graftv1.KillCommandRequest{CommandId: commandID, Signal: "SIGKILL"})
 	test.That(t, err, test.ShouldBeNil)
 }
+
+// TestGroupConnectionsByDaemonDedupesSharedDaemon covers connections
+// restored under two different names (e.g. two SSH aliases resolving to the
+// same host) that end up sharing a single underlying remoteDaemon. They must
+// collapse into one group so `graft ps` doesn't list the same command twice.
+func TestGroupConnectionsByDaemonDedupesSharedDaemon(t *testing.T) {
+	sharedDaemon := &remoteDaemon{}
+	otherDaemon := &remoteDaemon{}
+
+	conns := map[string]*Connection{
+		"dev-a":   newConnection(sharedDaemon, "dev-a", "", "", false),
+		"dev-b":   newConnection(sharedDaemon, "dev-b", "", "", false),
+		"staging": newConnection(otherDaemon, "staging", "", "", false),
+	}
+
+	groups := groupConnectionsByDaemon(conns, "")
+	test.That(t, len(groups), test.ShouldEqual, 2)
+
+	byNames := map[string][]string{}
+	for _, g := range groups {
+		byNames[strings.Join(g.names, ",")] = g.names
+	}
+
+	test.That(t, byNames["dev-a,dev-b"], test.ShouldResemble, []string{"dev-a", "dev-b"})
+	test.That(t, byNames["staging"], test.ShouldResemble, []string{"staging"})
+}
+
+// TestGroupConnectionsByDaemonFiltersByName covers the --to case: only the
+// named connection's group should come back, even if it shares a daemon with
+// others.
+func TestGroupConnectionsByDaemonFiltersByName(t *testing.T) {
+	sharedDaemon := &remoteDaemon{}
+
+	conns := map[string]*Connection{
+		"dev-a": newConnection(sharedDaemon, "dev-a", "", "", false),
+		"dev-b": newConnection(sharedDaemon, "dev-b", "", "", false),
+	}
+
+	groups := groupConnectionsByDaemon(conns, "dev-b")
+	test.That(t, len(groups), test.ShouldEqual, 1)
+	test.That(t, groups[0].names, test.ShouldResemble, []string{"dev-b"})
+}

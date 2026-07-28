@@ -3,6 +3,8 @@ package graft
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -34,22 +36,20 @@ func (srv *Server) ListCommands(
 		}
 	}
 
-	conns := srv.connMgr.Connections()
+	groups := groupConnectionsByDaemon(srv.connMgr.Connections(), req.GetConnectionName())
 
 	var commands []*graftv1.CommandInfo
 
-	for name, conn := range conns {
-		if req.GetConnectionName() != "" && name != req.GetConnectionName() {
-			continue
-		}
+	for _, g := range groups {
+		label := strings.Join(g.names, ", ")
 
-		connCommands, err := listConnectionCommands(ctx, conn)
+		connCommands, err := listConnectionCommands(ctx, g.conn, label)
 		if err != nil {
 			if req.GetConnectionName() != "" {
 				return nil, err
 			}
 
-			slog.DebugContext(ctx, "error listing commands for connection", "connection", name, "error", err)
+			slog.DebugContext(ctx, "error listing commands for connection", "connection", label, "error", err)
 
 			continue
 		}
@@ -60,9 +60,55 @@ func (srv *Server) ListCommands(
 	return &graftv1.ListCommandsResponse{Commands: commands}, nil
 }
 
+// commandListGroup is a connection representing an underlying remote daemon,
+// plus every connection name that reaches it.
+type commandListGroup struct {
+	conn  *Connection
+	names []string
+}
+
+// groupConnectionsByDaemon buckets connections that share an underlying
+// remote daemon so callers query (and list) each daemon only once, even when
+// multiple connection names resolve to the same daemon (e.g. two SSH aliases
+// restored to the same host). If filterName is non-empty, only the
+// connection with that name is included.
+func groupConnectionsByDaemon(conns map[string]*Connection, filterName string) []commandListGroup {
+	names := make([]string, 0, len(conns))
+	for name := range conns {
+		names = append(names, name)
+	}
+
+	slices.Sort(names)
+
+	byDaemon := map[*remoteDaemon]int{}
+
+	var groups []commandListGroup
+
+	for _, name := range names {
+		if filterName != "" && name != filterName {
+			continue
+		}
+
+		conn := conns[name]
+		d := conn.lockedDaemon()
+
+		idx, ok := byDaemon[d]
+		if !ok {
+			idx = len(groups)
+			groups = append(groups, commandListGroup{conn: conn})
+			byDaemon[d] = idx
+		}
+
+		groups[idx].names = append(groups[idx].names, name)
+	}
+
+	return groups
+}
+
 // listConnectionCommands lists a single connection's managed commands,
-// annotated with the connection name.
-func listConnectionCommands(ctx context.Context, conn *Connection) ([]*graftv1.CommandInfo, error) {
+// annotated with the given label (typically the connection name, or the
+// joined names of every connection sharing that daemon).
+func listConnectionCommands(ctx context.Context, conn *Connection, label string) ([]*graftv1.CommandInfo, error) {
 	if state, _ := conn.State(); state != ConnectionStateConnected {
 		return nil, errors.WrapSuffix(errConnectionNotConnected, conn.Name())
 	}
@@ -82,7 +128,7 @@ func listConnectionCommands(ctx context.Context, conn *Connection) ([]*graftv1.C
 
 	commands := resp.GetCommands()
 	for _, info := range commands {
-		info.ConnectionName = conn.Name()
+		info.ConnectionName = label
 	}
 
 	return commands, nil
@@ -156,17 +202,19 @@ func (srv *Server) findCommandConnection(
 		return srv.connMgr.Connection(connectionName)
 	}
 
-	for name, conn := range srv.connMgr.Connections() {
-		commands, err := listConnectionCommands(ctx, conn)
+	for _, g := range groupConnectionsByDaemon(srv.connMgr.Connections(), "") {
+		label := strings.Join(g.names, ", ")
+
+		commands, err := listConnectionCommands(ctx, g.conn, label)
 		if err != nil {
-			slog.DebugContext(ctx, "error listing commands for connection", "connection", name, "error", err)
+			slog.DebugContext(ctx, "error listing commands for connection", "connection", label, "error", err)
 
 			continue
 		}
 
 		for _, info := range commands {
 			if info.GetCommandId() == commandID {
-				return conn, nil
+				return g.conn, nil
 			}
 		}
 	}

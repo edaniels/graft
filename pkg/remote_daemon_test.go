@@ -405,3 +405,99 @@ func TestRemoteDaemonInstallGuard(t *testing.T) {
 		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeFalse)
 	})
 }
+
+func TestRemoteDaemonAgentForwardGuard(t *testing.T) {
+	t.Run("second concurrent begin for the same connection is rejected until the first ends", func(t *testing.T) {
+		d := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+		d.runCtx = context.Background()
+
+		ctx1, _, started1 := d.tryBeginAgentForward("conn-a")
+		test.That(t, started1, test.ShouldBeTrue)
+		test.That(t, ctx1, test.ShouldNotBeNil)
+
+		_, _, started2 := d.tryBeginAgentForward("conn-a")
+		test.That(t, started2, test.ShouldBeFalse)
+		test.That(t, ctx1.Err(), test.ShouldBeNil)
+
+		d.endAgentForward("conn-a")
+		test.That(t, ctx1.Err(), test.ShouldNotBeNil)
+
+		ctx3, _, started3 := d.tryBeginAgentForward("conn-a")
+		test.That(t, started3, test.ShouldBeTrue)
+		test.That(t, ctx3, test.ShouldNotBeNil)
+		test.That(t, ctx3.Err(), test.ShouldBeNil)
+	})
+
+	t.Run("endAgentForward is a no-op when nothing is forwarding", func(t *testing.T) {
+		d := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+		d.runCtx = context.Background()
+
+		d.endAgentForward("conn-a")
+		d.stopAgentForward("conn-a")
+
+		_, _, started := d.tryBeginAgentForward("conn-a")
+		test.That(t, started, test.ShouldBeTrue)
+	})
+
+	t.Run("two different connections forward independently on a shared daemon", func(t *testing.T) {
+		d := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+		d.runCtx = context.Background()
+
+		ctxA, _, startedA := d.tryBeginAgentForward("conn-a")
+		test.That(t, startedA, test.ShouldBeTrue)
+
+		ctxB, _, startedB := d.tryBeginAgentForward("conn-b")
+		test.That(t, startedB, test.ShouldBeTrue)
+
+		// Stopping one must not affect the other.
+		d.stopAgentForward("conn-a")
+		test.That(t, ctxA.Err(), test.ShouldNotBeNil)
+		test.That(t, ctxB.Err(), test.ShouldBeNil)
+
+		// conn-a can be restarted independently of conn-b still running.
+		ctxA2, _, startedA2 := d.tryBeginAgentForward("conn-a")
+		test.That(t, startedA2, test.ShouldBeTrue)
+		test.That(t, ctxA2.Err(), test.ShouldBeNil)
+		test.That(t, ctxB.Err(), test.ShouldBeNil)
+	})
+
+	t.Run("tryBeginAgentForward refuses to start once the daemon is closed", func(t *testing.T) {
+		d := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+		d.runCtx = context.Background()
+		d.closed = true
+
+		_, _, started := d.tryBeginAgentForward("conn-a")
+		test.That(t, started, test.ShouldBeFalse)
+	})
+
+	t.Run("a stale worker cannot cancel a newer forward for the same connection (ABA)", func(t *testing.T) {
+		d := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+		d.runCtx = context.Background()
+
+		// Simulate the first forward's worker: begin, then it gets stopped
+		// out from under it (e.g. a reconnect or an explicit stop) before
+		// its own cleanup runs.
+		_, gen1, started1 := d.tryBeginAgentForward("conn-a")
+		test.That(t, started1, test.ShouldBeTrue)
+
+		d.stopAgentForward("conn-a")
+
+		// A newer forward is registered for the same connection name.
+		ctx2, gen2, started2 := d.tryBeginAgentForward("conn-a")
+		test.That(t, started2, test.ShouldBeTrue)
+		test.That(t, gen2, test.ShouldNotEqual, gen1)
+
+		// The first (stale) worker's cleanup call, keyed by its own
+		// generation, must not tear down the second forward.
+		d.endAgentForwardGen("conn-a", gen1)
+		test.That(t, ctx2.Err(), test.ShouldBeNil)
+
+		_, _, startedAgain := d.tryBeginAgentForward("conn-a")
+		test.That(t, startedAgain, test.ShouldBeFalse) // conn-a is still gen2's forward
+
+		// The second (current) worker's cleanup, with the right generation,
+		// does tear it down.
+		d.endAgentForwardGen("conn-a", gen2)
+		test.That(t, ctx2.Err(), test.ShouldNotBeNil)
+	})
+}

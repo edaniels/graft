@@ -23,7 +23,6 @@ import (
 	"github.com/mutagen-io/mutagen/pkg/synchronization/core"
 	"github.com/mutagen-io/mutagen/pkg/synchronization/core/ignore"
 	urlpkg "github.com/mutagen-io/mutagen/pkg/url"
-	"golang.org/x/crypto/ssh/agent"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -89,6 +88,7 @@ type Connection struct {
 	stateHash        uint32
 	closed           bool
 	fwdList          []ForwardCommandIntent
+	envFwdList       []string
 	synchronizations map[string]activeSync
 }
 
@@ -146,17 +146,18 @@ func (conn *Connection) RunCommand(
 	sendErr := runClient.Send(&graftv1.RunCommandRequest{
 		Data: &graftv1.RunCommandRequest_Start{
 			Start: &graftv1.StartCommand{
-				Cwd:            cwd,
-				Shell:          shell,
-				ExactCommand:   true,
-				Command:        command,
-				Arguments:      arguments,
-				ExtraEnv:       extraEnv,
-				Sudo:           sudo,
-				AllocatePty:    allocatePty,
-				RedirectStdout: redirectStdout,
-				RedirectStderr: redirectStderr,
-				Persistence:    persistence,
+				Cwd:                  cwd,
+				Shell:                shell,
+				ExactCommand:         true,
+				Command:              command,
+				Arguments:            arguments,
+				ExtraEnv:             extraEnv,
+				Sudo:                 sudo,
+				AllocatePty:          allocatePty,
+				RedirectStdout:       redirectStdout,
+				RedirectStderr:       redirectStderr,
+				Persistence:          persistence,
+				OriginConnectionName: conn.Name(),
 			},
 		},
 	})
@@ -290,41 +291,9 @@ func (conn *Connection) AttachCommand(
 	return runningCmd, attached, nil
 }
 
-func (conn *Connection) ForwardSSHAgent(
-	ctx context.Context,
-) error {
-	cc, err := conn.daemon.lockedRemoteClientConn()
-	if err != nil {
-		return err
-	}
-
-	remClient := graftv1.NewGraftServiceClient(cc)
-
-	sshAgentClient, err := remClient.ForwardSSHAgent(ctx)
-	if err != nil {
-		return errors.Wrap(err)
-	}
-
-	if sendErr := sshAgentClient.Send(&graftv1.ForwardSSHAgentRequest{}); sendErr != nil {
-		return errors.Wrap(sendErr)
-	}
-
-	var dialer net.Dialer
-
-	sock, err := dialer.DialContext(ctx, "unix", os.Getenv("SSH_AUTH_SOCK"))
-	if err != nil {
-		slog.ErrorContext(ctx, "error dialing ssh auth sock", "error", err)
-
-		return nil
-	}
-	defer sock.Close()
-
-	sockAgent := agent.NewClient(sock)
-
-	localToRemoteConn := newForwardSSHAgentStreamClientWrapper(sshAgentClient)
-
-	return errors.Wrap(agent.ServeAgent(sockAgent, localToRemoteConn))
-}
+// forwardSSHAgentStreamer and its wrappers below back remoteDaemon.ForwardSSHAgent;
+// forwarding is a property of the shared remoteDaemon (not an individual Connection)
+// since multiple Connections may share one remote daemon.
 
 type forwardSSHAgentStreamer[ReadT binaryDataMessage] interface {
 	Recv() (ReadT, error)
@@ -439,6 +408,40 @@ func (conn *Connection) RemoveForwardCommands(commands []string) {
 
 	conn.fwdList = slices.DeleteFunc(conn.fwdList, func(intent ForwardCommandIntent) bool {
 		_, remove := toRemove[intent.Name]
+
+		return remove
+	})
+}
+
+// EnvForwardNames returns the environment variable names (or glob patterns)
+// this connection forwards on every graft run.
+func (conn *Connection) EnvForwardNames() []string {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	return slices.Clone(conn.envFwdList)
+}
+
+// UpdateEnvForward adds the given names/patterns to the env forward list.
+func (conn *Connection) UpdateEnvForward(names []string) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	conn.envFwdList = append(conn.envFwdList, names...)
+}
+
+// RemoveEnvForward removes the named entries from the env forward list.
+func (conn *Connection) RemoveEnvForward(names []string) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	toRemove := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		toRemove[name] = struct{}{}
+	}
+
+	conn.envFwdList = slices.DeleteFunc(conn.envFwdList, func(name string) bool {
+		_, remove := toRemove[name]
 
 		return remove
 	})

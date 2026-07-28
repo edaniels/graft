@@ -98,7 +98,8 @@ The plugin auto-triggers when you're working in a graft-managed directory, so yo
 | `run`        | Run a command on the remote                                          |
 | `shell`      | Open a remote shell                                                  |
 | `sync`       | Sync files to the remote                                             |
-| `forward`    | Forward local commands to the remote                                 |
+| `forward`    | Forward local commands, ports, or the SSH agent to the remote ([details](#ssh-agent-forwarding)) |
+| `env`        | Manage environment variable forwarding ([details](#environment-variable-forwarding)) |
 | `use`        | Pin a connection to the current shell session                        |
 | `status`     | Show connection status                                               |
 | `doctor`     | Check environment setup and diagnose issues                          |
@@ -188,6 +189,43 @@ scan prunes the directory before the re-include is ever consulted. graft warns
 you (right in the `graft sync` output, and in the daemon log for config-driven
 syncs) when an include pattern is shadowed this way, so it never fails
 silently.
+
+## SSH agent forwarding
+
+Forward your local SSH agent to a connection so remote commands (e.g. `git push`
+over SSH) can use your local keys, with no manual setup:
+
+```bash
+graft forward --agent --to myconn          # start forwarding
+graft forward remove --agent --to myconn   # stop forwarding
+```
+
+`--agent` is a flag, not a subcommand, so it can never be confused with
+forwarding a real command or port literally named "agent" (e.g. some
+`*-agent` daemon).
+
+This is a persistent, per-connection setting, not a one-off action: once enabled,
+graft keeps the forward alive for as long as the connection is up, automatically
+re-establishing it after reconnects or daemon restarts. It's opt-in per
+connection; nothing is forwarded by default.
+
+## Environment variable forwarding
+
+Stop retyping `FOO_API_KEY=$FOO_API_KEY FOO_APP_KEY=$FOO_APP_KEY graft run ...` for
+vars that rarely change. `graft env forward` persists an allowlist of variable
+names (glob patterns like `FOO_*` are supported) that `graft run` resolves from
+your live shell environment on every invocation:
+
+```bash
+graft env forward FOO_API_KEY FOO_APP_KEY --to myconn   # add to the forward list
+graft env forward list --to myconn                    # see what's forwarded
+graft env forward remove FOO_API_KEY --to myconn       # stop forwarding a name
+```
+
+Only the names/patterns are persisted, never values - each `graft run` re-reads
+them from whatever is currently in your shell. The one-off inline form
+(`VAR=val graft run ...`) still works and takes precedence over the persisted
+list when both name the same variable.
 
 ## Remote language servers (LSP)
 
@@ -301,10 +339,6 @@ Connections created with `--background` are excluded from CWD-based auto-selecti
 graft connect . user@build-server --background --name build
 graft use build          # explicitly switch to it
 ```
-
-## Coming Soon
-
-- **Transparent SSH agent forwarding** -- use local SSH keys on the remote without manual setup (written, not yet tested)
 
 ## Architecture
 

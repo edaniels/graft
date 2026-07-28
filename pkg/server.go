@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -49,10 +50,14 @@ type Server struct {
 	restartRequested       bool
 	buffLineWriter         *BufferedLineWriter
 
-	identity        string
-	sshAuthSockPath string
-	startedAt       time.Time
-	lastOrphanReap  time.Time
+	identity string
+	// sshAuthSockPaths holds a forwarded SSH agent socket path per
+	// origin_connection_name (see StartCommand), so connections sharing this
+	// remote daemon can have independent agent-forwarding settings. Guarded
+	// by serverMu. Only populated on ServerRoleRemote.
+	sshAuthSockPaths map[string]string
+	startedAt        time.Time
+	lastOrphanReap   time.Time
 }
 
 // NewServer returns a new daemon capable of serving any server role. All configuration is specified
@@ -457,8 +462,10 @@ func (srv *Server) reconcileConnections(ctx context.Context) {
 // are safe (typically ConnectionStateConnected).
 func (srv *Server) applyConnectionSpec(ctx context.Context, conn *Connection, conf ConnectionConfig) {
 	srv.reconcileForwardCommands(ctx, conn, conf)
+	srv.reconcileEnvForward(ctx, conn, conf)
 	srv.reconcileSyncs(ctx, conn, conf)
 	srv.reconcilePortForwards(ctx, conn, conf)
+	srv.reconcileAgentForward(conn, conf)
 }
 
 // cloneConnectionConfig returns a copy of conf safe to use after dropping the
@@ -469,6 +476,7 @@ func cloneConnectionConfig(conf ConnectionConfig) ConnectionConfig {
 	conf.PrefixForward = slices.Clone(conf.PrefixForward)
 	conf.Synchronizations = slices.Clone(conf.Synchronizations)
 	conf.Ports = slices.Clone(conf.Ports)
+	conf.EnvForward = slices.Clone(conf.EnvForward)
 
 	return conf
 }
@@ -564,6 +572,32 @@ func (srv *Server) reconcileForwardCommands(ctx context.Context, conn *Connectio
 	slog.InfoContext(ctx, "reconcile: added forward commands", "name", conf.Name, "count", len(missing))
 }
 
+func (srv *Server) reconcileEnvForward(ctx context.Context, conn *Connection, conf ConnectionConfig) {
+	missing := computeMissingEnvForward(conf.EnvForward, conn.EnvForwardNames())
+	if len(missing) == 0 {
+		return
+	}
+
+	conn.UpdateEnvForward(missing)
+	slog.InfoContext(ctx, "reconcile: added env forward names", "name", conf.Name, "count", len(missing))
+}
+
+// reconcileAgentForward starts or stops SSH agent forwarding for conn based
+// on conf.ForwardAgent. Both directions are idempotent (see
+// remoteDaemon.startAgentForward/stopAgentForward) and keyed by conn's name,
+// so connections sharing a remote daemon (same host+identity) can have
+// independent settings without fighting over shared state. Safe to call
+// every tick.
+func (srv *Server) reconcileAgentForward(conn *Connection, conf ConnectionConfig) {
+	daemon := conn.lockedDaemon()
+
+	if conf.ForwardAgent {
+		daemon.startAgentForward(conn.Name())
+	} else {
+		daemon.stopAgentForward(conn.Name())
+	}
+}
+
 func (srv *Server) reconcilePortForwards(ctx context.Context, conn *Connection, conf ConnectionConfig) {
 	if len(conf.Ports) == 0 {
 		return
@@ -650,6 +684,31 @@ func computeMissingForwardCommands(desired, active []ForwardCommandIntent) []For
 	}
 
 	missing := make([]ForwardCommandIntent, 0, len(desired))
+
+	for _, d := range desired {
+		if _, ok := activeSet[d]; ok {
+			continue
+		}
+
+		missing = append(missing, d)
+	}
+
+	return missing
+}
+
+// computeMissingEnvForward returns the desired env forward names not already
+// present in active (matched by exact string equality).
+func computeMissingEnvForward(desired, active []string) []string {
+	if len(desired) == 0 {
+		return nil
+	}
+
+	activeSet := make(map[string]struct{}, len(active))
+	for _, a := range active {
+		activeSet[a] = struct{}{}
+	}
+
+	missing := make([]string, 0, len(desired))
 
 	for _, d := range desired {
 		if _, ok := activeSet[d]; ok {
@@ -770,6 +829,133 @@ func (srv *Server) RemoveForwardCommands(commands []string, fromDestination stri
 
 				return remove
 			})
+			srv.rootConfig.Connections[idx] = connConfig
+
+			break
+		}
+	}
+
+	srv.persistConfig()
+
+	return nil
+}
+
+// UpdateEnvForward adds the given env var names/patterns to be forwarded for the connection associated
+// with the destination label and then persists them; if an error happens updating, the config is not persisted.
+func (srv *Server) UpdateEnvForward(names []string, toDestination string) error {
+	if err := validateEnvForwardNames(names); err != nil {
+		return err
+	}
+
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	conn, err := srv.connMgr.Connection(toDestination)
+	if err != nil {
+		return err
+	}
+
+	// Skip names already forwarded: ConnectionConfig.Validate rejects
+	// duplicate EnvForward entries, so blindly appending here would corrupt
+	// rootConfig in memory the moment the same name is added twice (a
+	// perfectly natural thing to do), permanently failing every future
+	// persistConfig call (for any feature) until the daemon restarts.
+	missing := computeMissingEnvForward(names, conn.EnvForwardNames())
+	if len(missing) == 0 {
+		return nil
+	}
+
+	if err := srv.connMgr.UpdateEnvForward(conn.Name(), missing); err != nil {
+		return err
+	}
+
+	for idx, connConfig := range srv.rootConfig.Connections {
+		if connConfig.Name == conn.Name() {
+			connConfig.EnvForward = append(connConfig.EnvForward, missing...)
+			srv.rootConfig.Connections[idx] = connConfig
+
+			break
+		}
+	}
+
+	srv.persistConfig()
+
+	return nil
+}
+
+var errEnvForwardTooBroad = errors.NewBare("env forward pattern is too broad")
+
+// validateEnvForwardNames rejects malformed glob patterns and a bare "*",
+// which would forward the entire environment (PATH, HOME, etc. included) and
+// defeat the explicit-allowlist design this feature relies on (see the
+// "Security:" comment near __INLINE_VARS in local_client_commands.go).
+func validateEnvForwardNames(names []string) error {
+	for _, name := range names {
+		if name == "*" {
+			return errors.WrapSuffix(errEnvForwardTooBroad, name)
+		}
+
+		if _, err := path.Match(name, ""); err != nil {
+			return errors.WrapPrefix(err, "invalid env forward pattern "+name)
+		}
+	}
+
+	return nil
+}
+
+// RemoveEnvForward removes the specified env var names/patterns from the connection associated with the
+// destination label and then persists the config.
+func (srv *Server) RemoveEnvForward(names []string, fromDestination string) error {
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	conn, err := srv.connMgr.Connection(fromDestination)
+	if err != nil {
+		return err
+	}
+
+	if err := srv.connMgr.RemoveEnvForward(conn.Name(), names); err != nil {
+		return err
+	}
+
+	toRemove := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		toRemove[name] = struct{}{}
+	}
+
+	for idx, connConfig := range srv.rootConfig.Connections {
+		if connConfig.Name == conn.Name() {
+			connConfig.EnvForward = slices.DeleteFunc(connConfig.EnvForward, func(name string) bool {
+				_, remove := toRemove[name]
+
+				return remove
+			})
+			srv.rootConfig.Connections[idx] = connConfig
+
+			break
+		}
+	}
+
+	srv.persistConfig()
+
+	return nil
+}
+
+// SetForwardAgent enables or disables automatic SSH agent forwarding for the connection associated
+// with the destination label and then persists the config. The change takes effect on the next
+// reconcile tick (see reconcileAgentForward).
+func (srv *Server) SetForwardAgent(enabled bool, toDestination string) error {
+	srv.serverMu.Lock()
+	defer srv.serverMu.Unlock()
+
+	conn, err := srv.connMgr.Connection(toDestination)
+	if err != nil {
+		return err
+	}
+
+	for idx, connConfig := range srv.rootConfig.Connections {
+		if connConfig.Name == conn.Name() {
+			connConfig.ForwardAgent = enabled
 			srv.rootConfig.Connections[idx] = connConfig
 
 			break

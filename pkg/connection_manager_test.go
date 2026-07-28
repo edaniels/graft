@@ -174,6 +174,40 @@ func TestConnectionManagerRemoveForwardCommands(t *testing.T) {
 	})
 }
 
+func TestConnectionManagerEnvForward(t *testing.T) {
+	t.Run("adds and removes env forward names on an existing connection", func(t *testing.T) {
+		mgr := NewConnectionManager(slog.LevelDebug)
+		defer mgr.Close()
+
+		daemon := newRemoteDaemon(&noopConnector{}, slog.LevelDebug)
+		daemon.runCtx = mgr.runCtx
+		daemon.setState(ConnectionStateConnected)
+		conn, createErr := mgr.createConnection("test-conn", "/local", "/remote", daemon, false)
+		test.That(t, createErr, test.ShouldBeNil)
+
+		err := mgr.UpdateEnvForward("test-conn", []string{"FOO_API_KEY", "FOO_APP_KEY"})
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, conn.EnvForwardNames(), test.ShouldResemble, []string{"FOO_API_KEY", "FOO_APP_KEY"})
+
+		err = mgr.RemoveEnvForward("test-conn", []string{"FOO_API_KEY"})
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, conn.EnvForwardNames(), test.ShouldResemble, []string{"FOO_APP_KEY"})
+	})
+
+	t.Run("returns error for unknown connection", func(t *testing.T) {
+		mgr := NewConnectionManager(slog.LevelDebug)
+		defer mgr.Close()
+
+		err := mgr.UpdateEnvForward("nonexistent", []string{"FOO_API_KEY"})
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, errors.Is(err, errConnectionNotFound), test.ShouldBeTrue)
+
+		err = mgr.RemoveEnvForward("nonexistent", []string{"FOO_API_KEY"})
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, errors.Is(err, errConnectionNotFound), test.ShouldBeTrue)
+	})
+}
+
 // fakeConnectorFactory implements ConnectorFactory for testing.
 type fakeConnectorFactory struct {
 	connector RemoteConnector

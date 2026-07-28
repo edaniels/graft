@@ -33,6 +33,10 @@ const (
 	GraftService_GetConnectionAvailableCommands_FullMethodName  = "/graft.v1.GraftService/GetConnectionAvailableCommands"
 	GraftService_UpdateConnectionForwardCommands_FullMethodName = "/graft.v1.GraftService/UpdateConnectionForwardCommands"
 	GraftService_RemoveConnectionForwardCommands_FullMethodName = "/graft.v1.GraftService/RemoveConnectionForwardCommands"
+	GraftService_UpdateConnectionEnvForward_FullMethodName      = "/graft.v1.GraftService/UpdateConnectionEnvForward"
+	GraftService_RemoveConnectionEnvForward_FullMethodName      = "/graft.v1.GraftService/RemoveConnectionEnvForward"
+	GraftService_GetConnectionEnvForward_FullMethodName         = "/graft.v1.GraftService/GetConnectionEnvForward"
+	GraftService_SetConnectionForwardAgent_FullMethodName       = "/graft.v1.GraftService/SetConnectionForwardAgent"
 	GraftService_SyncFilesToConnection_FullMethodName           = "/graft.v1.GraftService/SyncFilesToConnection"
 	GraftService_DumpLogs_FullMethodName                        = "/graft.v1.GraftService/DumpLogs"
 	GraftService_SyncFilesToConnectionProtocol_FullMethodName   = "/graft.v1.GraftService/SyncFilesToConnectionProtocol"
@@ -107,6 +111,20 @@ type GraftServiceClient interface {
 	UpdateConnectionForwardCommands(ctx context.Context, in *UpdateConnectionForwardCommandsRequest, opts ...grpc.CallOption) (*UpdateConnectionForwardCommandsResponse, error)
 	// RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
 	RemoveConnectionForwardCommands(ctx context.Context, in *RemoveConnectionForwardCommandsRequest, opts ...grpc.CallOption) (*RemoveConnectionForwardCommandsResponse, error)
+	// UpdateConnectionEnvForward adds the specified environment variable names (or glob
+	// patterns, e.g. "SOME_ENV_*") to be forwarded for a connection. Values are resolved from the
+	// invoking shell's live environment at graft run time, never stored.
+	UpdateConnectionEnvForward(ctx context.Context, in *UpdateConnectionEnvForwardRequest, opts ...grpc.CallOption) (*UpdateConnectionEnvForwardResponse, error)
+	// RemoveConnectionEnvForward removes the specified names/patterns from a connection's env forward list.
+	RemoveConnectionEnvForward(ctx context.Context, in *RemoveConnectionEnvForwardRequest, opts ...grpc.CallOption) (*RemoveConnectionEnvForwardResponse, error)
+	// GetConnectionEnvForward returns the environment variable names/patterns configured to
+	// forward for a connection, so the CLI can resolve them from the local environment
+	// before starting a command.
+	GetConnectionEnvForward(ctx context.Context, in *GetConnectionEnvForwardRequest, opts ...grpc.CallOption) (*GetConnectionEnvForwardResponse, error)
+	// SetConnectionForwardAgent enables or disables automatic SSH agent forwarding for a
+	// connection. When enabled, the daemon keeps the local SSH agent forwarded to the
+	// connection's remote daemon for as long as the connection is up (see ForwardSSHAgent).
+	SetConnectionForwardAgent(ctx context.Context, in *SetConnectionForwardAgentRequest, opts ...grpc.CallOption) (*SetConnectionForwardAgentResponse, error)
 	// SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
 	SyncFilesToConnection(ctx context.Context, in *SyncFilesToConnectionRequest, opts ...grpc.CallOption) (*SyncFilesToConnectionResponse, error)
 	// DumpLogs dumps all found daemon logs as raw text.
@@ -323,6 +341,46 @@ func (c *graftServiceClient) RemoveConnectionForwardCommands(ctx context.Context
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RemoveConnectionForwardCommandsResponse)
 	err := c.cc.Invoke(ctx, GraftService_RemoveConnectionForwardCommands_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) UpdateConnectionEnvForward(ctx context.Context, in *UpdateConnectionEnvForwardRequest, opts ...grpc.CallOption) (*UpdateConnectionEnvForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateConnectionEnvForwardResponse)
+	err := c.cc.Invoke(ctx, GraftService_UpdateConnectionEnvForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) RemoveConnectionEnvForward(ctx context.Context, in *RemoveConnectionEnvForwardRequest, opts ...grpc.CallOption) (*RemoveConnectionEnvForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveConnectionEnvForwardResponse)
+	err := c.cc.Invoke(ctx, GraftService_RemoveConnectionEnvForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) GetConnectionEnvForward(ctx context.Context, in *GetConnectionEnvForwardRequest, opts ...grpc.CallOption) (*GetConnectionEnvForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetConnectionEnvForwardResponse)
+	err := c.cc.Invoke(ctx, GraftService_GetConnectionEnvForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graftServiceClient) SetConnectionForwardAgent(ctx context.Context, in *SetConnectionForwardAgentRequest, opts ...grpc.CallOption) (*SetConnectionForwardAgentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetConnectionForwardAgentResponse)
+	err := c.cc.Invoke(ctx, GraftService_SetConnectionForwardAgent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -575,6 +633,20 @@ type GraftServiceServer interface {
 	UpdateConnectionForwardCommands(context.Context, *UpdateConnectionForwardCommandsRequest) (*UpdateConnectionForwardCommandsResponse, error)
 	// RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
 	RemoveConnectionForwardCommands(context.Context, *RemoveConnectionForwardCommandsRequest) (*RemoveConnectionForwardCommandsResponse, error)
+	// UpdateConnectionEnvForward adds the specified environment variable names (or glob
+	// patterns, e.g. "SOME_ENV_*") to be forwarded for a connection. Values are resolved from the
+	// invoking shell's live environment at graft run time, never stored.
+	UpdateConnectionEnvForward(context.Context, *UpdateConnectionEnvForwardRequest) (*UpdateConnectionEnvForwardResponse, error)
+	// RemoveConnectionEnvForward removes the specified names/patterns from a connection's env forward list.
+	RemoveConnectionEnvForward(context.Context, *RemoveConnectionEnvForwardRequest) (*RemoveConnectionEnvForwardResponse, error)
+	// GetConnectionEnvForward returns the environment variable names/patterns configured to
+	// forward for a connection, so the CLI can resolve them from the local environment
+	// before starting a command.
+	GetConnectionEnvForward(context.Context, *GetConnectionEnvForwardRequest) (*GetConnectionEnvForwardResponse, error)
+	// SetConnectionForwardAgent enables or disables automatic SSH agent forwarding for a
+	// connection. When enabled, the daemon keeps the local SSH agent forwarded to the
+	// connection's remote daemon for as long as the connection is up (see ForwardSSHAgent).
+	SetConnectionForwardAgent(context.Context, *SetConnectionForwardAgentRequest) (*SetConnectionForwardAgentResponse, error)
 	// SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
 	SyncFilesToConnection(context.Context, *SyncFilesToConnectionRequest) (*SyncFilesToConnectionResponse, error)
 	// DumpLogs dumps all found daemon logs as raw text.
@@ -680,6 +752,18 @@ func (UnimplementedGraftServiceServer) UpdateConnectionForwardCommands(context.C
 }
 func (UnimplementedGraftServiceServer) RemoveConnectionForwardCommands(context.Context, *RemoveConnectionForwardCommandsRequest) (*RemoveConnectionForwardCommandsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveConnectionForwardCommands not implemented")
+}
+func (UnimplementedGraftServiceServer) UpdateConnectionEnvForward(context.Context, *UpdateConnectionEnvForwardRequest) (*UpdateConnectionEnvForwardResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateConnectionEnvForward not implemented")
+}
+func (UnimplementedGraftServiceServer) RemoveConnectionEnvForward(context.Context, *RemoveConnectionEnvForwardRequest) (*RemoveConnectionEnvForwardResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveConnectionEnvForward not implemented")
+}
+func (UnimplementedGraftServiceServer) GetConnectionEnvForward(context.Context, *GetConnectionEnvForwardRequest) (*GetConnectionEnvForwardResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConnectionEnvForward not implemented")
+}
+func (UnimplementedGraftServiceServer) SetConnectionForwardAgent(context.Context, *SetConnectionForwardAgentRequest) (*SetConnectionForwardAgentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetConnectionForwardAgent not implemented")
 }
 func (UnimplementedGraftServiceServer) SyncFilesToConnection(context.Context, *SyncFilesToConnectionRequest) (*SyncFilesToConnectionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SyncFilesToConnection not implemented")
@@ -987,6 +1071,78 @@ func _GraftService_RemoveConnectionForwardCommands_Handler(srv interface{}, ctx 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GraftServiceServer).RemoveConnectionForwardCommands(ctx, req.(*RemoveConnectionForwardCommandsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_UpdateConnectionEnvForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateConnectionEnvForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).UpdateConnectionEnvForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_UpdateConnectionEnvForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).UpdateConnectionEnvForward(ctx, req.(*UpdateConnectionEnvForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_RemoveConnectionEnvForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveConnectionEnvForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).RemoveConnectionEnvForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_RemoveConnectionEnvForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).RemoveConnectionEnvForward(ctx, req.(*RemoveConnectionEnvForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_GetConnectionEnvForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetConnectionEnvForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).GetConnectionEnvForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_GetConnectionEnvForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).GetConnectionEnvForward(ctx, req.(*GetConnectionEnvForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GraftService_SetConnectionForwardAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetConnectionForwardAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftServiceServer).SetConnectionForwardAgent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftService_SetConnectionForwardAgent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftServiceServer).SetConnectionForwardAgent(ctx, req.(*SetConnectionForwardAgentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1300,6 +1456,22 @@ var GraftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveConnectionForwardCommands",
 			Handler:    _GraftService_RemoveConnectionForwardCommands_Handler,
+		},
+		{
+			MethodName: "UpdateConnectionEnvForward",
+			Handler:    _GraftService_UpdateConnectionEnvForward_Handler,
+		},
+		{
+			MethodName: "RemoveConnectionEnvForward",
+			Handler:    _GraftService_RemoveConnectionEnvForward_Handler,
+		},
+		{
+			MethodName: "GetConnectionEnvForward",
+			Handler:    _GraftService_GetConnectionEnvForward_Handler,
+		},
+		{
+			MethodName: "SetConnectionForwardAgent",
+			Handler:    _GraftService_SetConnectionForwardAgent_Handler,
 		},
 		{
 			MethodName: "SyncFilesToConnection",

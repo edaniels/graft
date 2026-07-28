@@ -79,6 +79,24 @@ service GraftService {
   // RemoveConnectionForwardCommands removes the specified commands from being forwarded for a connection.
   rpc RemoveConnectionForwardCommands(RemoveConnectionForwardCommandsRequest) returns (RemoveConnectionForwardCommandsResponse) {}
 
+  // UpdateConnectionEnvForward adds the specified environment variable names (or glob
+  // patterns, e.g. "SOME_ENV_*") to be forwarded for a connection. Values are resolved from the
+  // invoking shell's live environment at graft run time, never stored.
+  rpc UpdateConnectionEnvForward(UpdateConnectionEnvForwardRequest) returns (UpdateConnectionEnvForwardResponse) {}
+
+  // RemoveConnectionEnvForward removes the specified names/patterns from a connection's env forward list.
+  rpc RemoveConnectionEnvForward(RemoveConnectionEnvForwardRequest) returns (RemoveConnectionEnvForwardResponse) {}
+
+  // GetConnectionEnvForward returns the environment variable names/patterns configured to
+  // forward for a connection, so the CLI can resolve them from the local environment
+  // before starting a command.
+  rpc GetConnectionEnvForward(GetConnectionEnvForwardRequest) returns (GetConnectionEnvForwardResponse) {}
+
+  // SetConnectionForwardAgent enables or disables automatic SSH agent forwarding for a
+  // connection. When enabled, the daemon keeps the local SSH agent forwarded to the
+  // connection's remote daemon for as long as the connection is up (see ForwardSSHAgent).
+  rpc SetConnectionForwardAgent(SetConnectionForwardAgentRequest) returns (SetConnectionForwardAgentResponse) {}
+
   // SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
   rpc SyncFilesToConnection(SyncFilesToConnectionRequest) returns (SyncFilesToConnectionResponse) {}
 
@@ -384,6 +402,35 @@ message RemoveConnectionForwardCommandsRequest {
 
 message RemoveConnectionForwardCommandsResponse {}
 
+message UpdateConnectionEnvForwardRequest {
+  string connection_name = 1;
+  repeated string names = 2;
+}
+
+message UpdateConnectionEnvForwardResponse {}
+
+message RemoveConnectionEnvForwardRequest {
+  string connection_name = 1;
+  repeated string names = 2;
+}
+
+message RemoveConnectionEnvForwardResponse {}
+
+message GetConnectionEnvForwardRequest {
+  string connection_name = 1;
+}
+
+message GetConnectionEnvForwardResponse {
+  repeated string names = 1;
+}
+
+message SetConnectionForwardAgentRequest {
+  string connection_name = 1;
+  bool enabled = 2;
+}
+
+message SetConnectionForwardAgentResponse {}
+
 message SyncFilesToConnectionRequest {
   string source_dir = 1;
   string dest_dir = 2;
@@ -515,6 +562,16 @@ message StartCommand {
   bool redirect_stderr = 12; // this redirects the stderr of a pty to the bidi command itself.
 
   CommandPersistence persistence = 13; // lifetime behavior on client disconnect.
+
+  // origin_connection_name identifies, for the REMOTE daemon's benefit, which
+  // local Connection this command is running through. Set only when a local
+  // daemon relays a command to its remote counterpart (see
+  // Connection.RunCommand); used to scope per-connection remote-daemon state
+  // (e.g. a forwarded SSH agent socket, see ForwardSSHAgentRequest) so
+  // connections sharing one remote daemon can have independent settings.
+  // Distinct from connection_name (field 2), which the LOCAL daemon instead
+  // uses to select which Connection should handle an incoming request.
+  string origin_connection_name = 14;
 }
 
 // AttachCommand re-attaches a client to a managed command, replaying buffered

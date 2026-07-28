@@ -638,16 +638,18 @@ func (srv *Server) runLocalCommand(ctx context.Context, cmdReq *graftv1.StartCom
 
 	srv.serverMu.Lock()
 
-	if srv.sshAuthSockPath != "" {
-		extraEnv = append(extraEnv, "SSH_AUTH_SOCK="+srv.sshAuthSockPath)
+	sockPath := srv.sshAuthSockPaths[cmdReq.GetOriginConnectionName()]
+
+	srv.serverMu.Unlock()
+
+	if sockPath != "" {
+		extraEnv = append(extraEnv, "SSH_AUTH_SOCK="+sockPath)
 
 		// TODO(erd): this is definitely better expressed by the user
 		extraEnv = append(extraEnv, `GIT_CONFIG_COUNT=1`)
 		extraEnv = append(extraEnv, `GIT_CONFIG_KEY_0=url.ssh://git@github.com/.insteadOf`)
 		extraEnv = append(extraEnv, `GIT_CONFIG_VALUE_0=https://github.com/`)
 	}
-
-	srv.serverMu.Unlock()
 
 	// Set trust env for all commands (including shells) so mise configs
 	// in connection root directories are auto-trusted.

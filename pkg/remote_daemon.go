@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/crypto/ssh/agent"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
@@ -65,8 +67,17 @@ type remoteDaemon struct {
 	remoteSocketPath  string
 	cancelMonitor     func()
 	cancelMonitorPort func()
-	portForwards      map[string]*activePortForward
-	explicitPorts     map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
+	// agentForwards holds an entry per connection name currently forwarding
+	// the SSH agent, keyed independently so connections sharing this daemon
+	// (same host+identity) can have different ForwardAgent settings without
+	// fighting over shared state. Each entry is tagged with a generation
+	// number (agentForwardGen) so a slow-finishing worker whose forward was
+	// already stopped can't tear down a newer forward registered for the
+	// same connection name in the meantime (see endAgentForwardGen).
+	agentForwards   map[string]agentForwardEntry
+	agentForwardGen uint64
+	portForwards    map[string]*activePortForward
+	explicitPorts   map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
 
 	remoteRoots                  atomic.Pointer[[]string]
 	availableCommands            atomic.Pointer[[]string]
@@ -778,6 +789,12 @@ func (d *remoteDaemon) teardownForReconnect(ctx context.Context) {
 		d.cancelMonitorPort = nil
 	}
 
+	for _, entry := range d.agentForwards {
+		entry.cancel()
+	}
+
+	d.agentForwards = nil
+
 	for key, fwd := range d.portForwards {
 		fwd.cancel()
 		fwd.relayCancel()
@@ -976,6 +993,149 @@ func (d *remoteDaemon) monitorPorts() {
 
 		d.watchAndForwardPorts(cancelCtx)
 	}()
+}
+
+// agentForwardEntry tracks one connection's active agent forward: its cancel
+// func plus the generation it was registered under (see endAgentForwardGen).
+type agentForwardEntry struct {
+	cancel context.CancelFunc
+	gen    uint64
+}
+
+// tryBeginAgentForward atomically checks whether an agent forward is already
+// active for connName and, if not, reserves the slot and returns a context
+// tied to it plus the generation it was registered under. Forwarding is
+// keyed per connection name (not just per remoteDaemon) because multiple
+// Connections can share one remote daemon process with different
+// ForwardAgent settings; without this per-key guard, two Connections would
+// fight over a single shared forwarding slot.
+func (d *remoteDaemon) tryBeginAgentForward(connName string) (context.Context, uint64, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.closed {
+		return nil, 0, false
+	}
+
+	if _, active := d.agentForwards[connName]; active {
+		return nil, 0, false
+	}
+
+	ctx, cancel := context.WithCancel(d.runCtx)
+	d.agentForwardGen++
+	gen := d.agentForwardGen
+
+	if d.agentForwards == nil {
+		d.agentForwards = map[string]agentForwardEntry{}
+	}
+
+	d.agentForwards[connName] = agentForwardEntry{cancel: cancel, gen: gen}
+
+	return ctx, gen, true
+}
+
+// endAgentForward unconditionally tears down whatever agent forward is
+// currently active for connName, regardless of generation (used for
+// explicit stop requests, e.g. stopAgentForward). No-op if connName isn't
+// currently forwarding.
+func (d *remoteDaemon) endAgentForward(connName string) {
+	d.mu.Lock()
+	entry, active := d.agentForwards[connName]
+
+	if active {
+		delete(d.agentForwards, connName)
+	}
+
+	d.mu.Unlock()
+
+	if active {
+		entry.cancel()
+	}
+}
+
+// endAgentForwardGen clears connName's forward only if it's still the one
+// tagged with gen. A worker started by startAgentForward calls this (rather
+// than endAgentForward) when its ForwardSSHAgent call returns, so that a slow
+// worker whose forward was already stopped can't tear down a newer forward
+// registered for the same connName in the meantime (ABA).
+func (d *remoteDaemon) endAgentForwardGen(connName string, gen uint64) {
+	d.mu.Lock()
+
+	entry, active := d.agentForwards[connName]
+	if !active || entry.gen != gen {
+		d.mu.Unlock()
+
+		return
+	}
+
+	delete(d.agentForwards, connName)
+	d.mu.Unlock()
+
+	entry.cancel()
+}
+
+// startAgentForward begins forwarding the local SSH agent to the remote
+// daemon on connName's behalf, in the background, for as long as the daemon
+// lives (or until stopAgentForward(connName) is called). No-op if a forward
+// for connName is already active.
+func (d *remoteDaemon) startAgentForward(connName string) {
+	ctx, gen, started := d.tryBeginAgentForward(connName)
+	if !started {
+		return
+	}
+
+	d.activeWorkers.Go(func() {
+		if err := d.ForwardSSHAgent(ctx, connName); err != nil && !IsCanceledError(err) {
+			slog.ErrorContext(ctx, "ssh agent forward ended", "connection", connName, "error", err)
+		}
+
+		d.endAgentForwardGen(connName, gen)
+	})
+}
+
+// stopAgentForward tears down connName's active agent forward, if any.
+func (d *remoteDaemon) stopAgentForward(connName string) {
+	d.endAgentForward(connName)
+}
+
+// ForwardSSHAgent relays the local SSH agent (dialed via SSH_AUTH_SOCK) to
+// this daemon's remote counterpart for the lifetime of ctx, scoped to
+// connName so the remote daemon can serve it only to commands running
+// through that connection (see StartCommand.origin_connection_name and
+// server_grpc_command.go's matching lookup). Blocks until ctx is canceled or
+// the underlying stream fails.
+func (d *remoteDaemon) ForwardSSHAgent(ctx context.Context, connName string) error {
+	cc, err := d.lockedRemoteClientConn()
+	if err != nil {
+		return err
+	}
+
+	remClient := graftv1.NewGraftServiceClient(cc)
+
+	sshAgentClient, err := remClient.ForwardSSHAgent(ctx)
+	if err != nil {
+		return errors.Wrap(err)
+	}
+
+	if sendErr := sshAgentClient.Send(&graftv1.ForwardSSHAgentRequest{ConnectionName: connName}); sendErr != nil {
+		return errors.Wrap(sendErr)
+	}
+
+	var dialer net.Dialer
+
+	sock, err := dialer.DialContext(ctx, "unix", os.Getenv("SSH_AUTH_SOCK"))
+	if err != nil {
+		slog.ErrorContext(ctx, "error dialing ssh auth sock", "error", err)
+
+		return nil
+	}
+	defer sock.Close()
+
+	sockAgent := agent.NewClient(sock)
+
+	localToRemoteConn := newForwardSSHAgentStreamClientWrapper(sshAgentClient)
+
+	return errors.Wrap(agent.ServeAgent(sockAgent, localToRemoteConn))
 }
 
 func (d *remoteDaemon) watchAndForwardPorts(ctx context.Context) {
@@ -1682,6 +1842,10 @@ func (d *remoteDaemon) Close() error {
 
 	if d.cancelMonitorPort != nil {
 		d.cancelMonitorPort()
+	}
+
+	for _, entry := range d.agentForwards {
+		entry.cancel()
 	}
 
 	for key, fwd := range d.portForwards {

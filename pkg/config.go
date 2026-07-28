@@ -196,6 +196,14 @@ type ConnectionConfig struct {
 	Background bool `yaml:"background,omitempty"`
 	// Explicit port forwards for this connection (e.g. "8080", "3000:8080/tcp").
 	Ports []string `yaml:"ports,omitempty"`
+	// ForwardAgent, when true, keeps the local SSH agent forwarded to this
+	// connection's remote daemon for as long as the connection is up.
+	ForwardAgent bool `yaml:"forwardAgent,omitempty"`
+	// EnvForward is a list of environment variable names (glob patterns
+	// allowed, e.g. "FOO_*") that graft run resolves from the invoking
+	// shell's live environment and forwards to the remote, without needing
+	// to retype them inline on every command.
+	EnvForward []string `yaml:"envForward,omitempty"`
 }
 
 var errConnectionConfigDuplicateForwarding = errors.NewBare("connection duplicate forwarding detected")
@@ -236,6 +244,17 @@ func (conf *ConnectionConfig) Validate() error {
 		if err := validateSyncModes(syncConf.DefaultFileMode, syncConf.DefaultDirectoryMode); err != nil {
 			return errors.WrapPrefix(err, fmt.Sprintf("synchronization %d invalid", idx))
 		}
+	}
+
+	seenEnvFwd := map[string]bool{}
+	for _, name := range conf.EnvForward {
+		if seenEnvFwd[name] {
+			return errors.WrapSuffix(
+				errConnectionConfigDuplicateForwarding,
+				fmt.Sprintf("connection='%s', envForward='%s'", conf.Name, name))
+		}
+
+		seenEnvFwd[name] = true
 	}
 
 	return nil

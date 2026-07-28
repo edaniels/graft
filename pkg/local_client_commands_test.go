@@ -294,3 +294,52 @@ func TestForwardSignalsHangupDetachesWithoutForwarding(t *testing.T) {
 
 	close(sigs)
 }
+
+func TestResolveEnvForwardNames(t *testing.T) {
+	environ := []string{
+		"FOO_API_KEY=abc123",
+		"FOO_APP_KEY=def456",
+		"OTHER_VAR=irrelevant",
+		"malformed",
+	}
+
+	t.Run("no patterns matches nothing", func(t *testing.T) {
+		got := resolveEnvForwardNames(nil, environ)
+		test.That(t, got, test.ShouldBeEmpty)
+	})
+
+	t.Run("exact name matches only that var", func(t *testing.T) {
+		got := resolveEnvForwardNames([]string{"FOO_API_KEY"}, environ)
+		test.That(t, got, test.ShouldResemble, []string{"FOO_API_KEY=abc123"})
+	})
+
+	t.Run("glob pattern matches all names it covers", func(t *testing.T) {
+		got := resolveEnvForwardNames([]string{"FOO_*"}, environ)
+		test.That(t, got, test.ShouldResemble, []string{"FOO_API_KEY=abc123", "FOO_APP_KEY=def456"})
+	})
+
+	t.Run("pattern matching nothing returns empty", func(t *testing.T) {
+		got := resolveEnvForwardNames([]string{"NOPE_*"}, environ)
+		test.That(t, got, test.ShouldBeEmpty)
+	})
+}
+
+func TestMergeEnvKeepFirst(t *testing.T) {
+	t.Run("base entries win on key conflict", func(t *testing.T) {
+		base := []string{"FOO_API_KEY=from-inline"}
+		add := []string{"FOO_API_KEY=from-forward", "FOO_APP_KEY=from-forward"}
+
+		got := mergeEnvKeepFirst(base, add)
+		test.That(t, got, test.ShouldResemble, []string{"FOO_API_KEY=from-inline", "FOO_APP_KEY=from-forward"})
+	})
+
+	t.Run("empty base takes all of add", func(t *testing.T) {
+		got := mergeEnvKeepFirst(nil, []string{"FOO_API_KEY=v1"})
+		test.That(t, got, test.ShouldResemble, []string{"FOO_API_KEY=v1"})
+	})
+
+	t.Run("malformed entries in add are skipped", func(t *testing.T) {
+		got := mergeEnvKeepFirst(nil, []string{"malformed"})
+		test.That(t, got, test.ShouldBeEmpty)
+	})
+}

@@ -366,6 +366,7 @@ type ConnectParams struct {
 	// Post-init options.
 	ForwardCommands []string
 	ForwardPrefix   bool
+	ForwardAgent    bool     // keep the local SSH agent forwarded to this connection
 	PortForwards    []string // explicit port forward specs (e.g. "8080", "3000:8080/tcp")
 	WithSync        bool
 
@@ -460,6 +461,12 @@ func (client *LocalClient) postInitConnection(
 
 	if len(params.PortForwards) > 0 {
 		if fwdErr := client.AddPortForwards(ctx, params.PortForwards, resolvedConnectionName); fwdErr != nil {
+			return fwdErr
+		}
+	}
+
+	if params.ForwardAgent {
+		if fwdErr := client.SetForwardAgent(ctx, true, resolvedConnectionName); fwdErr != nil {
 			return fwdErr
 		}
 	}
@@ -1071,6 +1078,16 @@ func (client *LocalClient) runCommand(
 		})
 	}
 
+	// In addition to one-off inline vars above, forward any names/patterns
+	// persistently configured for the target connection (see `graft env
+	// forward`). Inline vars take precedence on conflict since they're a
+	// more specific, on-demand override.
+	if targetConn := client.resolveConnectionNameForEnvForward(ctx, opts); targetConn != "" {
+		if names, envErr := client.EnvForwardList(ctx, targetConn); envErr == nil && len(names) > 0 {
+			envToPass = mergeEnvKeepFirst(envToPass, resolveEnvForwardNames(names, os.Environ()))
+		}
+	}
+
 	stdinIsTerminal := term.IsTerminal(int(os.Stdin.Fd()))
 	stdoutIsTerminal := true
 
@@ -1218,6 +1235,132 @@ func (client *LocalClient) RemoveForwardCommands(ctx context.Context, commands [
 	if _, err := client.RemoveConnectionForwardCommands(ctx, &graftv1.RemoveConnectionForwardCommandsRequest{
 		ConnectionName: connectionName,
 		Commands:       commands,
+	}); err != nil {
+		return client.handleError(err)
+	}
+
+	return nil
+}
+
+// resolveConnectionNameForEnvForward returns the connection name graft run
+// would target, resolving from CWD when opts.ConnectionName wasn't given
+// explicitly. Returns "" if it can't be resolved (env forwarding is then
+// silently skipped rather than failing the command).
+func (client *LocalClient) resolveConnectionNameForEnvForward(ctx context.Context, opts RunCommandOptions) string {
+	if opts.ConnectionName != "" {
+		return opts.ConnectionName
+	}
+
+	selectResp, err := client.SelectConnectionForCWD(ctx)
+	if err != nil {
+		return ""
+	}
+
+	return selectResp.GetConnectionName()
+}
+
+// resolveEnvForwardNames expands patterns (exact names or globs like "FOO_*")
+// against a live environment (as KEY=value pairs, e.g. os.Environ()),
+// returning the KEY=value entries for every variable that's actually set
+// locally and matches at least one pattern.
+func resolveEnvForwardNames(patterns []string, environ []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	var matched []string
+
+	for _, keyVal := range environ {
+		key, _, ok := strings.Cut(keyVal, "=")
+		if !ok {
+			continue
+		}
+
+		for _, pattern := range patterns {
+			// An invalid pattern just never matches; it shouldn't block env
+			// forwarding for other, validly-named entries.
+			matches, _ := path.Match(pattern, key) //nolint:errcheck
+			if matches {
+				matched = append(matched, keyVal)
+
+				break
+			}
+		}
+	}
+
+	return matched
+}
+
+// mergeEnvKeepFirst appends entries from add whose key isn't already present
+// in base, so base's entries (e.g. an explicit inline override) win on conflict.
+func mergeEnvKeepFirst(base, add []string) []string {
+	seen := make(map[string]struct{}, len(base))
+
+	for _, kv := range base {
+		if key, _, ok := strings.Cut(kv, "="); ok {
+			seen[key] = struct{}{}
+		}
+	}
+
+	for _, kv := range add {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+
+		if _, dup := seen[key]; dup {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		base = append(base, kv)
+	}
+
+	return base
+}
+
+// EnvForward adds the given env var names/patterns to be forwarded for the connection.
+func (client *LocalClient) EnvForward(ctx context.Context, names []string, connectionName string) error {
+	if _, err := client.UpdateConnectionEnvForward(ctx, &graftv1.UpdateConnectionEnvForwardRequest{
+		ConnectionName: connectionName,
+		Names:          names,
+	}); err != nil {
+		return client.handleError(err)
+	}
+
+	return nil
+}
+
+// RemoveEnvForward removes the specified env var names/patterns from being forwarded for a connection.
+func (client *LocalClient) RemoveEnvForward(ctx context.Context, names []string, connectionName string) error {
+	if _, err := client.RemoveConnectionEnvForward(ctx, &graftv1.RemoveConnectionEnvForwardRequest{
+		ConnectionName: connectionName,
+		Names:          names,
+	}); err != nil {
+		return client.handleError(err)
+	}
+
+	return nil
+}
+
+// EnvForwardList returns the env var names/patterns configured to forward for a connection.
+func (client *LocalClient) EnvForwardList(ctx context.Context, connectionName string) ([]string, error) {
+	resp, err := client.GetConnectionEnvForward(ctx, &graftv1.GetConnectionEnvForwardRequest{
+		ConnectionName: connectionName,
+	})
+	if err != nil {
+		return nil, client.handleError(err)
+	}
+
+	return resp.GetNames(), nil
+}
+
+// SetForwardAgent enables or disables automatic SSH agent forwarding for a connection.
+func (client *LocalClient) SetForwardAgent(ctx context.Context, enabled bool, connectionName string) error {
+	if _, err := client.SetConnectionForwardAgent(ctx, &graftv1.SetConnectionForwardAgentRequest{
+		ConnectionName: connectionName,
+		Enabled:        enabled,
 	}); err != nil {
 		return client.handleError(err)
 	}

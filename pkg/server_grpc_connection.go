@@ -590,6 +590,70 @@ func (srv *Server) RemoveConnectionForwardCommands(
 	return &graftv1.RemoveConnectionForwardCommandsResponse{}, nil
 }
 
+// UpdateConnectionEnvForward adds the specified env var names/patterns to be forwarded for a connection.
+func (srv *Server) UpdateConnectionEnvForward(
+	_ context.Context,
+	req *graftv1.UpdateConnectionEnvForwardRequest,
+) (*graftv1.UpdateConnectionEnvForwardResponse, error) {
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := srv.UpdateEnvForward(req.GetNames(), conn.Name()); err != nil {
+		return nil, err
+	}
+
+	return &graftv1.UpdateConnectionEnvForwardResponse{}, nil
+}
+
+// RemoveConnectionEnvForward removes the specified names/patterns from a connection's env forward list.
+func (srv *Server) RemoveConnectionEnvForward(
+	_ context.Context,
+	req *graftv1.RemoveConnectionEnvForwardRequest,
+) (*graftv1.RemoveConnectionEnvForwardResponse, error) {
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := srv.RemoveEnvForward(req.GetNames(), conn.Name()); err != nil {
+		return nil, err
+	}
+
+	return &graftv1.RemoveConnectionEnvForwardResponse{}, nil
+}
+
+// GetConnectionEnvForward returns the env var names/patterns configured to forward for a connection.
+func (srv *Server) GetConnectionEnvForward(
+	_ context.Context,
+	req *graftv1.GetConnectionEnvForwardRequest,
+) (*graftv1.GetConnectionEnvForwardResponse, error) {
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	return &graftv1.GetConnectionEnvForwardResponse{Names: conn.EnvForwardNames()}, nil
+}
+
+// SetConnectionForwardAgent enables or disables automatic SSH agent forwarding for a connection.
+func (srv *Server) SetConnectionForwardAgent(
+	_ context.Context,
+	req *graftv1.SetConnectionForwardAgentRequest,
+) (*graftv1.SetConnectionForwardAgentResponse, error) {
+	conn, err := srv.connMgr.Connection(req.GetConnectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := srv.SetForwardAgent(req.GetEnabled(), conn.Name()); err != nil {
+		return nil, err
+	}
+
+	return &graftv1.SetConnectionForwardAgentResponse{}, nil
+}
+
 // SyncFilesToConnection sets up a bidirectional synchronization between the local and remote daemons.
 func (srv *Server) SyncFilesToConnection(
 	ctx context.Context,
@@ -724,25 +788,27 @@ func (srv *Server) DumpLogs(ctx context.Context, req *graftv1.DumpLogsRequest) (
 }
 
 func (srv *Server) ForwardSSHAgent(server graftv1.GraftService_ForwardSSHAgentServer) error {
+	// Peek at the first message to get the connection name, then forward it.
+	// On both roles this message carries no agent-protocol Data (see
+	// remoteDaemon.ForwardSSHAgent), so consuming it here doesn't lose any
+	// bytes the wrapper below would otherwise need.
+	firstMsg, err := server.Recv()
+	if err != nil {
+		return errors.Wrap(err)
+	}
+
+	connName := firstMsg.GetConnectionName()
+	if connName == "" {
+		return errors.New("ForwardSSHAgent: connection_name is required")
+	}
+
 	if srv.role != ServerRoleRemote {
-		// Peek at the first message to get the connection name, then forward it.
-		firstMsg, err := server.Recv()
-		if err != nil {
-			return errors.Wrap(err)
+		conn, connErr := srv.connMgr.Connection(connName)
+		if connErr != nil {
+			return connErr
 		}
 
-		connName := firstMsg.GetConnectionName()
-		if connName == "" {
-			return errors.New("ForwardSSHAgent: connection_name is required")
-		}
-
-		// TODO(erd): Consider integrating SSH agent forwarding into connection establishment procedures.
-		conn, err := srv.connMgr.Connection(connName)
-		if err != nil {
-			return err
-		}
-
-		return errors.Wrap(conn.ForwardSSHAgent(server.Context()))
+		return errors.Wrap(conn.lockedDaemon().ForwardSSHAgent(server.Context(), connName))
 	}
 
 	agentOverGRPCClient := agent.NewClient(newForwardSSHAgentStreamServerWrapper(server))
@@ -755,7 +821,7 @@ func (srv *Server) ForwardSSHAgent(server graftv1.GraftService_ForwardSSHAgentSe
 	sockFile.Close()
 	os.Remove(sockFile.Name())
 
-	slog.DebugContext(server.Context(), "local ssh agent uds sock", "path", sockFile.Name())
+	slog.DebugContext(server.Context(), "local ssh agent uds sock", "path", sockFile.Name(), "connection", connName)
 
 	listener, err := listenUnixSocket(sockFile.Name())
 	if err != nil {
@@ -763,20 +829,62 @@ func (srv *Server) ForwardSSHAgent(server graftv1.GraftService_ForwardSSHAgentSe
 		return errors.Wrap(err)
 	}
 
-	// TODO(erd): only allow one of these...
+	// Sockets are keyed per origin connection name so connections sharing
+	// this remote daemon (same host+identity) can have independent
+	// forwarding settings; see StartCommand.origin_connection_name and
+	// runLocalCommand's matching lookup. The local daemon already dedupes
+	// concurrent forward requests per (daemon, connection) pair (see
+	// remoteDaemon.tryBeginAgentForward), so this should only trip if
+	// something else calls this RPC directly while a forward for the same
+	// connection is already active.
 	srv.serverMu.Lock()
-	srv.sshAuthSockPath = sockFile.Name()
+
+	if _, active := srv.sshAuthSockPaths[connName]; active {
+		srv.serverMu.Unlock()
+		listener.Close()
+		os.Remove(sockFile.Name())
+
+		return errors.New("ssh agent forwarding is already active for this connection")
+	}
+
+	if srv.sshAuthSockPaths == nil {
+		srv.sshAuthSockPaths = map[string]string{}
+	}
+
+	srv.sshAuthSockPaths[connName] = sockFile.Name()
 	srv.serverMu.Unlock()
 
 	defer func() {
 		srv.serverMu.Lock()
-		srv.sshAuthSockPath = ""
+		delete(srv.sshAuthSockPaths, connName)
 		srv.serverMu.Unlock()
+	}()
+
+	// listener.Accept() only unblocks on a new connection or a closed
+	// listener; it has no idea about the gRPC stream's lifetime. Without
+	// this, canceling the stream (e.g. stopAgentForward, reconnect, or
+	// daemon Close) would leave this handler goroutine parked in Accept
+	// forever, so the deferred map cleanup above would never run and this
+	// connection's forward would be stuck "already active" until the remote
+	// process is killed.
+	watchCtx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+
+	go func() {
+		select {
+		case <-server.Context().Done():
+			listener.Close()
+		case <-watchCtx.Done():
+		}
 	}()
 
 	for {
 		nextConn, err := listener.Accept()
 		if err != nil {
+			if server.Context().Err() != nil {
+				return nil
+			}
+
 			return errors.Wrap(err)
 		}
 

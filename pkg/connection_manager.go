@@ -522,6 +522,30 @@ func (mgr *ConnectionManager) RemoveForwardCommands(name string, commands []stri
 	return nil
 }
 
+// UpdateEnvForward updates the env var names/patterns to forward for the given connection.
+func (mgr *ConnectionManager) UpdateEnvForward(name string, names []string) error {
+	conn, err := mgr.Connection(name)
+	if err != nil {
+		return err
+	}
+
+	conn.UpdateEnvForward(names)
+
+	return nil
+}
+
+// RemoveEnvForward removes the named entries from the given connection's env forward list.
+func (mgr *ConnectionManager) RemoveEnvForward(name string, names []string) error {
+	conn, err := mgr.Connection(name)
+	if err != nil {
+		return err
+	}
+
+	conn.RemoveEnvForward(names)
+
+	return nil
+}
+
 // Close ends our sessions with any existing connection and closes daemons.
 func (mgr *ConnectionManager) Close() {
 	// Snapshot under the lock, then close outside it. Closing a connection

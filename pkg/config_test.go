@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"go.viam.com/test"
+
+	"github.com/edaniels/graft/errors"
 )
 
 func TestRootConfigSyncModesFor(t *testing.T) {
@@ -87,5 +89,25 @@ func TestConnectionConfigValidateSyncModes(t *testing.T) {
 		}
 
 		test.That(t, conf.Validate(), test.ShouldNotBeNil)
+	})
+}
+
+func TestConnectionConfigValidateEnvForward(t *testing.T) {
+	base := ConnectionConfig{Name: "conn", Destination: "ssh://u@h"}
+
+	t.Run("unique names are valid", func(t *testing.T) {
+		conf := base
+		conf.EnvForward = []string{"FOO_API_KEY", "FOO_APP_KEY"}
+
+		test.That(t, conf.Validate(), test.ShouldBeNil)
+	})
+
+	t.Run("duplicate name fails", func(t *testing.T) {
+		conf := base
+		conf.EnvForward = []string{"FOO_API_KEY", "FOO_API_KEY"}
+
+		err := conf.Validate()
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, errors.Is(err, errConnectionConfigDuplicateForwarding), test.ShouldBeTrue)
 	})
 }

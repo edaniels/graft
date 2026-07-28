@@ -17,6 +17,7 @@ var (
 	connectName          string
 	connectForward       []string
 	connectForwardPrefix bool
+	connectForwardAgent  bool
 	connectSyncFlag      bool
 	connectSyncGitFlag   bool
 	connectSyncInclude   []string
@@ -77,6 +78,7 @@ Use --sync with local_dir and remote_dir to enable file synchronization.`,
 			RemoteRoot:      remoteDir,
 			ForwardCommands: fwdCommands,
 			ForwardPrefix:   connectForwardPrefix,
+			ForwardAgent:    connectForwardAgent,
 			PortForwards:    fwdPorts,
 			WithSync:        connectSyncFlag,
 			SyncGit:         connectSyncGitFlag,
@@ -356,6 +358,7 @@ func init() {
 	connectCmd.Flags().StringVarP(&connectName, "name", "n", "", "Connection name")
 	connectCmd.Flags().StringSliceVar(&connectForward, "forward", nil, "Commands to forward")
 	connectCmd.Flags().BoolVar(&connectForwardPrefix, "forward-prefix", false, "Forward with connection name prefix")
+	connectCmd.Flags().BoolVar(&connectForwardAgent, "forward-agent", false, "Keep the local SSH agent forwarded to this connection")
 	connectCmd.Flags().BoolVar(&connectSyncFlag, "sync", false, "Enable file synchronization")
 	connectCmd.Flags().BoolVar(&connectSyncGitFlag, "sync-git", false, "Also replicate .git one-way (remote git is read-only)")
 	// StringArray (not StringSlice) so brace patterns like '**/*.{pb.go,pb2.py}'

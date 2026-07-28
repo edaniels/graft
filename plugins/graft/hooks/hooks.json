@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graft claude-session-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

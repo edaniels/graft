@@ -25,6 +25,14 @@ command -v graft >/dev/null
 
 If none of these hold, do not use graft commands - this skill does not apply.
 
+A `SessionStart` hook bundled with this plugin already ran `graft
+claude-session-start` and, if this directory has a graft connection,
+injected its resolved connection name, state, shimmed commands, and port
+forwards into this session's context automatically. Check that context
+before running `graft status` just to look up the same thing - it's a
+one-time snapshot taken at session start, so re-run `graft status --json`
+yourself if you need current state later in a long session.
+
 **Shell activation is a hard prerequisite for command shimming.** `GRAFT_SESSION`
 is set by `eval "$(graft activate <shell>)"`, and only inside a shell that
 sourced that activation will shimmed commands like `make` or `python3` be

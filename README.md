@@ -87,7 +87,7 @@ If you use [Claude Code](https://claude.com/claude-code), install the graft plug
 /plugin install graft@graft
 ```
 
-The plugin auto-triggers when you're working in a graft-managed directory, so you can keep using Claude Code normally; it will reach for `graft run`, `graft sync`, and `graft status` instead of raw `ssh`/`scp` where appropriate.
+The plugin auto-triggers when you're working in a graft-managed directory, so you can keep using Claude Code normally; it will reach for `graft run`, `graft sync`, and `graft status` instead of raw `ssh`/`scp` where appropriate. It also installs a `SessionStart` hook that automatically tells Claude which connection, shimmed commands, and port forwards apply to the directory it started in, so it doesn't have to guess or ask.
 
 ## Commands
 

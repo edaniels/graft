@@ -123,8 +123,8 @@ func runDaemon() error {
 	runtimeCtx := setupRuntimeContext()
 	defer runtimeCtx.Close(context.Canceled)
 
-	logger, buffWriter, logLevel := graft.NewBufferedLogger(slog.LevelInfo)
-	slog.SetDefault(logger)
+	daemonLogger, buffWriter, logLevel := graft.NewBufferedLogger(slog.LevelInfo)
+	slog.SetDefault(daemonLogger)
 
 	// For local daemons, load persistent identity to use when connecting to remotes.
 	if serverRole == graft.ServerRoleLocal {
@@ -136,9 +136,9 @@ func runDaemon() error {
 		daemonIdentity = localIdentity
 	}
 
-	logStartup(runtimeCtx.Ctx, logger)
+	logStartup(runtimeCtx.Ctx, daemonLogger)
 
-	go checkForUpdateInBackground(runtimeCtx.Ctx, logger)
+	go checkForUpdateInBackground(runtimeCtx.Ctx, daemonLogger)
 
 	var success bool
 

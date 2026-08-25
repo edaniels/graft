@@ -80,7 +80,11 @@ function _graft_resolve_connection () {
 }
 
 function _graft_precmd () {
-  %[2]s report-cwd --pid=$GRAFT_SESSION `+"`pwd`"+` </dev/null &>/dev/null
+  # Only report directory changes
+  if [[ "$PWD" != "$_graft_last_reported_cwd" ]] && \
+    %[2]s report-cwd --pid=$GRAFT_SESSION "$PWD" </dev/null &>/dev/null; then
+    _graft_last_reported_cwd="$PWD"
+  fi
   _graft_resolve_connection
 }
 
@@ -152,7 +156,11 @@ _graft_resolve_connection () {
 _graft_precmd () {
   _graft_in_precmd=1
   _graft_preexec_fired=0
-  %[2]s report-cwd --pid=$GRAFT_SESSION $(pwd) </dev/null &>/dev/null
+  # Only report directory changes
+  if [[ "$PWD" != "$_graft_last_reported_cwd" ]] && \
+    %[2]s report-cwd --pid=$GRAFT_SESSION "$PWD" </dev/null &>/dev/null; then
+    _graft_last_reported_cwd="$PWD"
+  fi
   _graft_resolve_connection
   _graft_in_precmd=0
 }
@@ -203,7 +211,12 @@ function _graft_preexec --on-event fish_preexec
 end
 
 function _graft_postcmd --on-event fish_postexec
-  %[2]s report-cwd --pid=$GRAFT_SESSION (pwd) </dev/null &>/dev/null
+  # Only report directory changes
+  if test "$PWD" != "$_graft_last_reported_cwd"
+    if %[2]s report-cwd --pid=$GRAFT_SESSION "$PWD" </dev/null &>/dev/null
+      set -g _graft_last_reported_cwd $PWD
+    end
+  end
 end
 
 function _graft_update_connection

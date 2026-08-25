@@ -321,6 +321,87 @@ func TestDesiredForwardingsForSessionRespectsPin(t *testing.T) {
 	test.That(t, found, test.ShouldBeTrue)
 }
 
+func TestUpdateSessionCWDSkipsReconcileWhenUnchanged(t *testing.T) {
+	localRoot := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"myconn": newTestConnection("myconn", localRoot),
+	})
+
+	pid := uint64(99997)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99997")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+	connFilePath := filepath.Join(sessPath, currentConnectionFileName)
+
+	// First report reconciles and writes the current_connection file.
+	err := mgr.UpdateSessionCWD(ctx, pid, localRoot)
+	test.That(t, err, test.ShouldBeNil)
+
+	_, statErr := os.Stat(connFilePath)
+	test.That(t, statErr, test.ShouldBeNil)
+
+	// Removing the file and reporting the same (unchanged) cwd must be a full
+	// no-op: no reconcile means the file is not recreated.
+	test.That(t, os.Remove(connFilePath), test.ShouldBeNil)
+
+	err = mgr.UpdateSessionCWD(ctx, pid, localRoot)
+	test.That(t, err, test.ShouldBeNil)
+
+	_, statErr = os.Stat(connFilePath)
+	test.That(t, os.IsNotExist(statErr), test.ShouldBeTrue)
+
+	// Reporting a changed cwd still reconciles.
+	subDir := filepath.Join(localRoot, "sub")
+	test.That(t, os.Mkdir(subDir, DirPerms), test.ShouldBeNil)
+
+	err = mgr.UpdateSessionCWD(ctx, pid, subDir)
+	test.That(t, err, test.ShouldBeNil)
+
+	data, readErr := os.ReadFile(connFilePath)
+	test.That(t, readErr, test.ShouldBeNil)
+	test.That(t, string(data), test.ShouldEqual, "myconn")
+}
+
+func TestUpdateSessionCWDPersistsAcrossManagerRestart(t *testing.T) {
+	localRoot := t.TempDir()
+
+	mgr, sessionsRoot := newTestSessionManager(t, map[string]*Connection{
+		"myconn": newTestConnection("myconn", localRoot),
+	})
+
+	pid := uint64(99996)
+	sessPath := SessionPathFromRoot(sessionsRoot, "99996")
+
+	t.Cleanup(func() { os.RemoveAll(sessPath) })
+
+	ctx := context.Background()
+	err := mgr.UpdateSessionCWD(ctx, pid, localRoot)
+	test.That(t, err, test.ShouldBeNil)
+
+	// A brand new manager (simulating a daemon restart) must rehydrate the
+	// session's cwd from disk.
+	mgrRestarted, _ := newTestSessionManager(t, map[string]*Connection{
+		"myconn": newTestConnection("myconn", localRoot),
+	})
+
+	sess, sessErr := mgrRestarted.SessionByPID(pid)
+	test.That(t, sessErr, test.ShouldBeNil)
+	test.That(t, sess.CWD(), test.ShouldEqual, localRoot)
+
+	// A report of the rehydrated (unchanged) cwd must be a no-op, otherwise
+	// shells that cache their last report would trigger a needless reconcile.
+	test.That(t, os.Remove(filepath.Join(sessPath, currentConnectionFileName)), test.ShouldBeNil)
+
+	err = mgrRestarted.UpdateSessionCWD(ctx, pid, localRoot)
+	test.That(t, err, test.ShouldBeNil)
+
+	_, statErr := os.Stat(filepath.Join(sessPath, currentConnectionFileName))
+	test.That(t, os.IsNotExist(statErr), test.ShouldBeTrue)
+}
+
 func TestUpdateSessionCWDReconcileMultipleConnections(t *testing.T) {
 	wsRoot := t.TempDir()
 	projARoot := filepath.Join(wsRoot, "infra", "projectA")

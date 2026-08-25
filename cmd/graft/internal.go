@@ -14,7 +14,7 @@ var reportCwdCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, ctx := newClient(cmd.Context(), cmd, args, true)
+		client, ctx := newClient(cmd.Context(), cmd, args, false)
 		defer client.Close()
 
 		return client.ReportCWD(ctx, reportCwdPID, args[0])

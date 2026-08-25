@@ -26,6 +26,7 @@ import (
 const (
 	sudoCommandName           = "sudo"
 	currentConnectionFileName = "current_connection"
+	cwdFileName               = "cwd"
 )
 
 // The SessionManager is responsible for the lifetime of [Session]s. It is essentially a controller
@@ -455,13 +456,22 @@ func (mgr *SessionManager) getOrCreateSession(sessionPID uint64) (*Session, erro
 		dir:         sessPath,
 		shimPath:    shimPath,
 	}
+
+	// Rehydrate the last reported cwd (written by UpdateSessionCWD) so a daemon
+	// restart does not lose it; shells only report on directory changes.
+	if cwdData, readErr := os.ReadFile(filepath.Join(sessPath, cwdFileName)); readErr == nil {
+		sess.cwd = string(cwdData)
+	}
+
 	mgr.sessions[sessionPID] = sess
 
 	return sess, nil
 }
 
 // UpdateSessionCWD is used to update the last known cwd of a session identified by its PID.
-// It immediately reconciles shims so that the shell picks up changes in the same prompt cycle.
+// On a change it immediately reconciles shims so that the shell picks up changes in the
+// same prompt cycle. Reporting an unchanged cwd is a no-op since the periodic ticker
+// reconciles independent of cwd reports.
 func (mgr *SessionManager) UpdateSessionCWD(ctx context.Context, sessionPID uint64, cwd string) error {
 	mgr.sessMgrMu.Lock()
 	defer mgr.sessMgrMu.Unlock()
@@ -471,12 +481,26 @@ func (mgr *SessionManager) UpdateSessionCWD(ctx context.Context, sessionPID uint
 		return err
 	}
 
-	// TODO(erd): Protect against race condition on sess.cwd (concurrent read/write).
-	sess.cwd = cwd
+	if sess.CWD() == cwd {
+		return nil
+	}
+
+	sess.setCWD(cwd)
+	mgr.writeSessionCWDFile(sess, cwd)
 
 	mgr.tickReconcileSession(ctx, sess)
 
 	return nil
+}
+
+// writeSessionCWDFile persists the session's cwd so it survives daemon restarts.
+// Best effort: failure only degrades cwd tracking to in-memory behavior.
+func (mgr *SessionManager) writeSessionCWDFile(sess *Session, cwd string) {
+	filePath := filepath.Join(sess.dir, cwdFileName)
+
+	if err := os.WriteFile(filePath, []byte(cwd), FilePerms); err != nil {
+		slog.Error("error writing session cwd file", "error", err)
+	}
 }
 
 // PinConnection pins a connection to a session, overriding CWD-based auto-selection.

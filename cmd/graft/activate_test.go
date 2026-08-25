@@ -6,12 +6,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.viam.com/test"
 )
 
-const shellZsh = "zsh"
+const (
+	shellZsh  = "zsh"
+	shellBash = "bash"
+	shellFish = "fish"
+)
 
 var testGraftBinary string
 

@@ -38,6 +38,14 @@ func (sess *Session) CWD() string {
 	return sess.cwd
 }
 
+// setCWD updates the known current working directory of the session.
+func (sess *Session) setCWD(cwd string) {
+	sess.sessMu.Lock()
+	defer sess.sessMu.Unlock()
+
+	sess.cwd = cwd
+}
+
 // PinnedConnection returns the name of the pinned connection, or "" if none.
 func (sess *Session) PinnedConnection() string {
 	sess.sessMu.Lock()

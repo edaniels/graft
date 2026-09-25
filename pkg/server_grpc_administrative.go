@@ -31,7 +31,7 @@ func (srv *Server) Status(ctx context.Context, req *graftv1.StatusRequest) (*gra
 		return nil, err
 	}
 
-	remClient := graftv1.NewGraftServiceClient(conn.daemon.RemoteClientConn())
+	remClient := graftv1.NewGraftServiceClient(conn.lockedDaemon().RemoteClientConn())
 
 	status, err := remClient.Status(ctx, &graftv1.StatusRequest{})
 	if err != nil {

@@ -305,6 +305,94 @@ func TestSyncSessionName(t *testing.T) {
 	})
 }
 
+func TestResolveSyncSourceDir(t *testing.T) {
+	t.Run("empty means the cwd itself", func(t *testing.T) {
+		test.That(t, resolveSyncSourceDir("/work/dir", ""), test.ShouldEqual, "/work/dir")
+	})
+
+	t.Run("absolute passes through cleaned", func(t *testing.T) {
+		test.That(t, resolveSyncSourceDir("/work/dir", "/other/./x"), test.ShouldEqual, "/other/x")
+	})
+
+	t.Run("relative resolves against the client cwd, not the connection root", func(t *testing.T) {
+		// "graft sync ." from a subdirectory must sync that subdirectory.
+		test.That(t, resolveSyncSourceDir("/work/dir/sub", "."), test.ShouldEqual, "/work/dir/sub")
+		test.That(t, resolveSyncSourceDir("/work/dir/sub", "./foo"), test.ShouldEqual, "/work/dir/sub/foo")
+		test.That(t, resolveSyncSourceDir("/work/dir/sub", "../sibling"), test.ShouldEqual, "/work/dir/sibling")
+	})
+}
+
+func TestCanonicalizeSyncFromLocal(t *testing.T) {
+	t.Run("absolute path is cleaned and kept", func(t *testing.T) {
+		got, err := canonicalizeSyncFromLocal("/root", "/a/./b/")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, got, test.ShouldEqual, "/a/b")
+	})
+
+	t.Run("relative path resolves against the local root", func(t *testing.T) {
+		got, err := canonicalizeSyncFromLocal("/root", "sub/dir")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, got, test.ShouldEqual, "/root/sub/dir")
+	})
+
+	t.Run("dot resolves to the local root itself", func(t *testing.T) {
+		// The incident that motivated this: a "." source must never resolve
+		// against the daemon's cwd (typically /), which would sync the entire
+		// filesystem.
+		got, err := canonicalizeSyncFromLocal("/root", ".")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, got, test.ShouldEqual, "/root")
+	})
+
+	t.Run("dot-slash form resolves to the local root itself", func(t *testing.T) {
+		got, err := canonicalizeSyncFromLocal("/root", "./sub/..")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, got, test.ShouldEqual, "/root")
+	})
+
+	t.Run("relative path without a local root errors", func(t *testing.T) {
+		_, err := canonicalizeSyncFromLocal("", ".")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "no local root")
+	})
+
+	t.Run("empty source errors", func(t *testing.T) {
+		_, err := canonicalizeSyncFromLocal("/root", "")
+		test.That(t, err, test.ShouldNotBeNil)
+	})
+
+	t.Run("filesystem root is rejected", func(t *testing.T) {
+		_, err := canonicalizeSyncFromLocal("/root", "/")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "filesystem root")
+	})
+
+	t.Run("relative escape to the filesystem root is rejected", func(t *testing.T) {
+		_, err := canonicalizeSyncFromLocal("/a/b", "../../..")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "filesystem root")
+	})
+
+	t.Run("relative escape to a sibling is allowed", func(t *testing.T) {
+		got, err := canonicalizeSyncFromLocal("/a/b", "../sibling")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, got, test.ShouldEqual, "/a/sibling")
+	})
+}
+
+func TestSyncSessionNameStabilityAcrossRelativeForms(t *testing.T) {
+	// Canonicalization happens before session naming, so a relative spelling
+	// and the absolute spelling of the same tree must produce one session
+	// name (otherwise restarts would create duplicate sessions for one tree).
+	canonical, err := canonicalizeSyncFromLocal("/root", ".")
+	test.That(t, err, test.ShouldBeNil)
+
+	nameFromDot := syncSessionName("conn", SynchronizationIntent{FromLocal: canonical, ToRemote: "/r"})
+	nameFromAbs := syncSessionName("conn", SynchronizationIntent{FromLocal: "/root", ToRemote: "/r"})
+
+	test.That(t, nameFromDot, test.ShouldEqual, nameFromAbs)
+}
+
 func TestIsGraftSyncName(t *testing.T) {
 	t.Run("true for graft-prefixed names", func(t *testing.T) {
 		intent := SynchronizationIntent{FromLocal: "/a", ToRemote: "/b"}

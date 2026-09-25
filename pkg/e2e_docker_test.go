@@ -195,7 +195,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	// Override ourVersion to match the remote daemon so the second connection
 	// doesn't trigger a reinstall. In production, both connections originate
 	// from the same local daemon, so versions always match.
-	remClient := graftv1.NewGraftServiceClient(conn1.daemon.RemoteClientConn())
+	remClient := graftv1.NewGraftServiceClient(conn1.lockedDaemon().RemoteClientConn())
 	resp, err := remClient.Status(t.Context(), &graftv1.StatusRequest{})
 	test.That(t, err, test.ShouldBeNil)
 
@@ -230,7 +230,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	// The Shutdown RPC is fire-and-forget: the remote daemon sends SIGINT to
 	// itself, which may tear down the gRPC server before the response is
 	// flushed, causing an EOF or Unavailable error on the client side.
-	remClient = graftv1.NewGraftServiceClient(conn1.daemon.RemoteClientConn())
+	remClient = graftv1.NewGraftServiceClient(conn1.lockedDaemon().RemoteClientConn())
 	remClient.Shutdown(t.Context(), &graftv1.ShutdownRequest{}) //nolint:errcheck
 
 	// Trigger reconnect. Both connections share a daemon, so only one
@@ -238,7 +238,7 @@ func TestMultipleConnectionsSameIdentityE2E(t *testing.T) {
 	// concurrent attempts, so the second call returns false immediately.
 	reconnectCtx := mgr.runCtx
 
-	result := conn1.daemon.Reconnect(reconnectCtx)
+	result := conn1.lockedDaemon().Reconnect(reconnectCtx)
 	test.That(t, result, test.ShouldBeTrue)
 
 	// Both connections should be connected again and able to run commands.
@@ -977,7 +977,7 @@ chown -R testuser:testuser /home/testuser/project`)
 
 	go func() {
 		for {
-			_, byDir := conn.daemon.AvailableCommands()
+			_, byDir := conn.lockedDaemon().AvailableCommands()
 			for dir, cmds := range byDir {
 				for _, cmd := range cmds {
 					if dir == "/home/testuser/project" && filepath.Base(cmd) == "graft-test-tool" {
@@ -1042,7 +1042,7 @@ chmod +x /usr/local/bin/mise`)
 	go func() {
 		for {
 			// TODO(erd): test me
-			_, byDir := conn.daemon.AvailableCommands()
+			_, byDir := conn.lockedDaemon().AvailableCommands()
 			for dir, cmds := range byDir {
 				for _, cmd := range cmds {
 					if dir == "/home/testuser/project" && filepath.Base(cmd) == "graft-extra-tool" {

@@ -41,6 +41,28 @@ func TestRootConfigSyncModesFor(t *testing.T) {
 		test.That(t, fileMode, test.ShouldBeEmpty)
 		test.That(t, dirMode, test.ShouldBeEmpty)
 	})
+
+	t.Run("relative config entry matches a canonical query", func(t *testing.T) {
+		// Entries persisted with a relative fromLocal (e.g. a legacy "."
+		// entry) must still match the canonical path the Sync RPC queries
+		// with, or a bare graft sync after restart drops the entry's modes
+		// and includes.
+		relConf := &RootConfig{
+			Connections: []ConnectionConfig{{
+				Name:        "conn",
+				Destination: "ssh://u@h",
+				LocalRoot:   "/root",
+				Synchronizations: []SynchronizationIntentConfig{
+					{FromLocal: ".", ToRemote: "/R", DefaultFileMode: "640", DefaultDirectoryMode: "750", SyncInclude: []string{"x"}},
+				},
+			}},
+		}
+
+		fileMode, dirMode := relConf.SyncModesFor("conn", "/root")
+		test.That(t, fileMode, test.ShouldEqual, "640")
+		test.That(t, dirMode, test.ShouldEqual, "750")
+		test.That(t, relConf.SyncIncludesFor("conn", "/root"), test.ShouldResemble, []string{"x"})
+	})
 }
 
 func TestConnectionConfigValidateSyncModes(t *testing.T) {

@@ -18,7 +18,21 @@ func TestKillDaemonByPIDFileNoPIDFile(t *testing.T) {
 	pidPath := filepath.Join(dir, "graftd.pid")
 
 	// Should be a no-op when the file doesn't exist.
-	killDaemonByPIDFile(pidPath)
+	test.That(t, killDaemonByPIDFile(pidPath), test.ShouldBeNil)
+}
+
+func TestKillDaemonByPIDFileUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "graftd.pid")
+
+	// A directory where the PID file should be cannot be read; the old daemon
+	// is then unidentifiable and must be treated as unkillable so the caller
+	// can abort instead of starting a second daemon over it.
+	test.That(t, os.Mkdir(pidPath, 0o700), test.ShouldBeNil)
+
+	err := killDaemonByPIDFile(pidPath)
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "error reading PID file")
 }
 
 func TestKillDaemonByPIDFileInvalidContent(t *testing.T) {
@@ -27,7 +41,7 @@ func TestKillDaemonByPIDFileInvalidContent(t *testing.T) {
 
 	test.That(t, os.WriteFile(pidPath, []byte("garbage"), 0o600), test.ShouldBeNil)
 
-	killDaemonByPIDFile(pidPath)
+	test.That(t, killDaemonByPIDFile(pidPath), test.ShouldBeNil)
 
 	// File should be removed after invalid content.
 	_, err := os.Stat(pidPath)
@@ -47,7 +61,7 @@ func TestKillDaemonByPIDFileStalePID(t *testing.T) {
 
 	test.That(t, os.WriteFile(pidPath, []byte(strconv.Itoa(deadPID)), 0o600), test.ShouldBeNil)
 
-	killDaemonByPIDFile(pidPath)
+	test.That(t, killDaemonByPIDFile(pidPath), test.ShouldBeNil)
 
 	// File should be cleaned up for a dead process.
 	_, err := os.Stat(pidPath)
@@ -74,7 +88,7 @@ func TestKillDaemonByPIDFileLiveProcess(t *testing.T) {
 
 	test.That(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600), test.ShouldBeNil)
 
-	killDaemonByPIDFile(pidPath)
+	test.That(t, killDaemonByPIDFile(pidPath), test.ShouldBeNil)
 
 	// Wait for reaping to complete.
 	<-waitDone
@@ -86,6 +100,115 @@ func TestKillDaemonByPIDFileLiveProcess(t *testing.T) {
 	// PID file should be removed.
 	_, err = os.Stat(pidPath)
 	test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
+}
+
+func TestKillDaemonByPIDFileESRCHRaces(t *testing.T) {
+	t.Run("daemon dies between liveness probe and SIGTERM", func(t *testing.T) {
+		old := processSignal
+
+		t.Cleanup(func() { processSignal = old })
+
+		processSignal = func(pid int, sig syscall.Signal) error {
+			if sig == syscall.SIGTERM {
+				// Process already gone: SIGTERM races its exit.
+				return syscall.ESRCH
+			}
+
+			return syscall.Kill(pid, sig)
+		}
+
+		// A live process so the initial liveness probe succeeds.
+		cmd := exec.CommandContext(context.Background(), "sleep", "60")
+		test.That(t, cmd.Start(), test.ShouldBeNil)
+
+		waitDone := make(chan struct{})
+
+		go func() {
+			cmd.Wait() //nolint:errcheck
+			close(waitDone)
+		}()
+
+		pid := cmd.Process.Pid
+
+		t.Cleanup(func() {
+			cmd.Process.Kill() //nolint:errcheck // best effort cleanup
+			<-waitDone
+		})
+
+		dir := t.TempDir()
+		pidPath := filepath.Join(dir, "graftd.pid")
+		test.That(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600), test.ShouldBeNil)
+
+		// ESRCH means the old daemon is gone, which is exactly what --replace
+		// wants; it must not abort.
+		test.That(t, killDaemonByPIDFile(pidPath), test.ShouldBeNil)
+
+		_, err := os.Stat(pidPath)
+		test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
+	})
+
+	t.Run("daemon dies between SIGTERM wait and SIGKILL", func(t *testing.T) {
+		old := processSignal
+
+		t.Cleanup(func() { processSignal = old })
+
+		oldWait := replaceSIGTERMWait
+		replaceSIGTERMWait = 100 * time.Millisecond
+
+		t.Cleanup(func() { replaceSIGTERMWait = oldWait })
+
+		processSignal = func(pid int, sig syscall.Signal) error {
+			if sig == syscall.SIGKILL {
+				return syscall.ESRCH
+			}
+
+			return syscall.Kill(pid, sig)
+		}
+
+		// SIGTERM-resistant (trapped) but SIGKILLable live process.
+		dir := t.TempDir()
+		readyPath := filepath.Join(dir, "ready")
+
+		trapCmd := "trap '' TERM; touch " + readyPath + "; sleep 60"
+		cmd := exec.CommandContext(context.Background(), "bash", "-c", trapCmd)
+		test.That(t, cmd.Start(), test.ShouldBeNil)
+
+		waitDone := make(chan struct{})
+
+		go func() {
+			cmd.Wait() //nolint:errcheck
+			close(waitDone)
+		}()
+
+		pid := cmd.Process.Pid
+
+		t.Cleanup(func() {
+			cmd.Process.Kill() //nolint:errcheck // best effort cleanup
+			<-waitDone
+		})
+
+		deadline := time.Now().Add(5 * time.Second)
+
+		for {
+			if _, err := os.Stat(readyPath); err == nil {
+				break
+			}
+
+			if time.Now().After(deadline) {
+				test.That(t, "trapped process never signaled readiness", test.ShouldBeEmpty)
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		pidPath := filepath.Join(dir, "graftd.pid")
+		test.That(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600), test.ShouldBeNil)
+
+		test.That(t, killDaemonByPIDFile(pidPath), test.ShouldBeNil)
+
+		_, err := os.Stat(pidPath)
+		test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
+	})
 }
 
 func TestKillDaemonByPIDFileSIGTERMResistant(t *testing.T) {
@@ -127,19 +250,16 @@ func TestKillDaemonByPIDFileSIGTERMResistant(t *testing.T) {
 
 	test.That(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600), test.ShouldBeNil)
 
-	done := make(chan struct{})
+	killErr := make(chan error, 1)
 
-	go func() {
-		defer close(done)
-
-		killDaemonByPIDFile(pidPath)
-	}()
+	go func() { killErr <- killDaemonByPIDFile(pidPath) }()
 
 	// Should complete within a reasonable time (SIGTERM wait + SIGKILL wait + buffer).
 	select {
-	case <-done:
+	case err := <-killErr:
+		test.That(t, err, test.ShouldBeNil)
 	case <-time.After(10 * time.Second):
-		t.Fatal("killDaemonByPIDFile did not complete in time")
+		test.That(t, "killDaemonByPIDFile did not complete in time", test.ShouldBeEmpty)
 	}
 
 	// Wait for reaping to complete.

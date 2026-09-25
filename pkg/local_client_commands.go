@@ -544,9 +544,7 @@ type SyncParams struct {
 
 // Sync sets up bidi file sync between the source directory and a connection.
 func (client *LocalClient) Sync(ctx context.Context, params SyncParams) error {
-	if params.SourceDir == "" {
-		params.SourceDir = client.cwd
-	}
+	params.SourceDir = resolveSyncSourceDir(client.cwd, params.SourceDir)
 
 	resp, err := client.SyncFilesToConnection(ctx, &graftv1.SyncFilesToConnectionRequest{
 		SourceDir:            params.SourceDir,

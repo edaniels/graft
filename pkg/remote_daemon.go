@@ -76,8 +76,12 @@ type remoteDaemon struct {
 	// same connection name in the meantime (see endAgentForwardGen).
 	agentForwards   map[string]agentForwardEntry
 	agentForwardGen uint64
-	portForwards    map[string]*activePortForward
-	explicitPorts   map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
+	// agentForwardFailures counts consecutive forward failures per
+	// connection name; it sizes the backoff the slot is held for after a
+	// failure (see holdAgentForwardBackoff). Reset on a clean forward end.
+	agentForwardFailures map[string]int
+	portForwards         map[string]*activePortForward
+	explicitPorts        map[string]PortForwardSpec // keyed by portForwardKey(protocol, remotePort)
 
 	remoteRoots                  atomic.Pointer[[]string]
 	availableCommands            atomic.Pointer[[]string]
@@ -794,6 +798,7 @@ func (d *remoteDaemon) teardownForReconnect(ctx context.Context) {
 	}
 
 	d.agentForwards = nil
+	d.agentForwardFailures = nil
 
 	for key, fwd := range d.portForwards {
 		fwd.cancel()
@@ -1002,6 +1007,28 @@ type agentForwardEntry struct {
 	gen    uint64
 }
 
+// agentForwardBaseBackoff and agentForwardMaxBackoff bound the retry cadence
+// for a failed agent forward. The reconcile loop calls startAgentForward
+// every second; without a backoff, a forward that fails fast (rejected by
+// the remote, a dangling SSH_AUTH_SOCK) busy-loops errors (~146k errors at
+// ~120/min in production). Variables for tests.
+var (
+	agentForwardBaseBackoff = time.Second
+	agentForwardMaxBackoff  = 30 * time.Second
+)
+
+// agentForwardBackoffFor returns how long a connection's forward slot stays
+// held after its failures-th consecutive failure, doubling from the base and
+// capping at the max. The held slot is what rate-limits retries: reconcile
+// ticks no-op while it's occupied.
+func agentForwardBackoffFor(failures int) time.Duration {
+	shift := min(failures-1, 5)
+
+	backoff := min(agentForwardBaseBackoff<<shift, agentForwardMaxBackoff)
+
+	return backoff
+}
+
 // tryBeginAgentForward atomically checks whether an agent forward is already
 // active for connName and, if not, reserves the slot and returns a context
 // tied to it plus the generation it was registered under. Forwarding is
@@ -1046,11 +1073,54 @@ func (d *remoteDaemon) endAgentForward(connName string) {
 		delete(d.agentForwards, connName)
 	}
 
+	// An explicit stop/start cycle restarts the backoff from the base.
+	delete(d.agentForwardFailures, connName)
 	d.mu.Unlock()
 
 	if active {
 		entry.cancel()
 	}
+}
+
+// holdAgentForwardBackoff records a forward failure for connName and holds
+// its slot for the resulting backoff window, so the reconcile loop's
+// every-second startAgentForward calls no-op instead of hot-looping
+// restarts. The wait yields early on cancellation (explicit stop or daemon
+// teardown); the worker's endAgentForwardGen then releases the slot.
+func (d *remoteDaemon) holdAgentForwardBackoff(ctx context.Context, connName string) {
+	// An explicit stop (or daemon teardown) racing the failure already
+	// canceled this forward's context and cleared any failure record; don't
+	// re-record one behind it, or the next start begins at a doubled backoff.
+	if ctx.Err() != nil {
+		return
+	}
+
+	d.mu.Lock()
+
+	if d.agentForwardFailures == nil {
+		d.agentForwardFailures = map[string]int{}
+	}
+
+	d.agentForwardFailures[connName]++
+	failures := d.agentForwardFailures[connName]
+	d.mu.Unlock()
+
+	timer := time.NewTimer(agentForwardBackoffFor(failures))
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
+// resetAgentForwardBackoff clears connName's failure count after a forward
+// ended cleanly, so the next failure's backoff starts from the base.
+func (d *remoteDaemon) resetAgentForwardBackoff(connName string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	delete(d.agentForwardFailures, connName)
 }
 
 // endAgentForwardGen clears connName's forward only if it's still the one
@@ -1087,6 +1157,9 @@ func (d *remoteDaemon) startAgentForward(connName string) {
 	d.activeWorkers.Go(func() {
 		if err := d.ForwardSSHAgent(ctx, connName); err != nil && !IsCanceledError(err) {
 			slog.ErrorContext(ctx, "ssh agent forward ended", "connection", connName, "error", err)
+			d.holdAgentForwardBackoff(ctx, connName)
+		} else {
+			d.resetAgentForwardBackoff(connName)
 		}
 
 		d.endAgentForwardGen(connName, gen)
@@ -1125,9 +1198,10 @@ func (d *remoteDaemon) ForwardSSHAgent(ctx context.Context, connName string) err
 
 	sock, err := dialer.DialContext(ctx, "unix", os.Getenv("SSH_AUTH_SOCK"))
 	if err != nil {
-		slog.ErrorContext(ctx, "error dialing ssh auth sock", "error", err)
-
-		return nil
+		// Return the error (rather than logging and swallowing it) so the
+		// caller's backoff path rate-limits the retry; a dangling or missing
+		// SSH_AUTH_SOCK otherwise busy-loops once per reconcile tick.
+		return errors.WrapPrefix(err, "error dialing ssh auth sock")
 	}
 	defer sock.Close()
 

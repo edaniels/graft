@@ -145,12 +145,25 @@ func TestSyncConnResolver(t *testing.T) {
 func TestEstablishSynchronizationWithRealResolverDoesNotDeadlock(t *testing.T) {
 	t.Setenv("MUTAGEN_DATA_DIRECTORY", t.TempDir())
 
+	// The REAL protocol handler with the REAL resolver (no stub). The restore
+	// cleanup is registered first so LIFO cleanup stops the manager and
+	// connections (whose session controllers read the global ProtocolHandlers
+	// map) before the map is restored.
+	proto := urlpkg.Protocol(syncProtoNum)
+	prev := synchronization.ProtocolHandlers[proto]
+
+	t.Cleanup(func() { synchronization.ProtocolHandlers[proto] = prev })
+
 	syncMgr, err := synchronization.NewManagerWithoutPersistence(logging.NewLoggerOnSlogger(slog.Default()))
 	test.That(t, err, test.ShouldBeNil)
 	t.Cleanup(syncMgr.Shutdown)
 
 	connMgr := NewConnectionManager(slog.LevelDebug)
 	t.Cleanup(connMgr.Close)
+
+	synchronization.ProtocolHandlers[proto] = &mutagenSyncProtocolHandler{
+		resolveConn: syncConnResolver(connMgr),
+	}
 
 	daemon := newRemoteDaemon(&echoConnector{}, slog.LevelDebug)
 	daemon.runCtx = connMgr.runCtx
@@ -164,15 +177,6 @@ func TestEstablishSynchronizationWithRealResolverDoesNotDeadlock(t *testing.T) {
 
 	conn, err := connMgr.createConnection("test", t.TempDir(), "/remote", daemon, false)
 	test.That(t, err, test.ShouldBeNil)
-
-	// The REAL protocol handler with the REAL resolver (no stub).
-	proto := urlpkg.Protocol(syncProtoNum)
-	prev := synchronization.ProtocolHandlers[proto]
-	synchronization.ProtocolHandlers[proto] = &mutagenSyncProtocolHandler{
-		resolveConn: syncConnResolver(connMgr),
-	}
-
-	t.Cleanup(func() { synchronization.ProtocolHandlers[proto] = prev })
 
 	// EstablishSynchronization holds conn.mu while syncManager.Create eagerly
 	// connects beta through the resolver. The passthrough conn dials nowhere,

@@ -119,11 +119,15 @@ func newSyncTestConn(t *testing.T, localRoot string) (*Connection, *synchronizat
 
 	t.Setenv("MUTAGEN_DATA_DIRECTORY", t.TempDir())
 
+	// Registered before the manager's Shutdown cleanup: cleanups run LIFO, so
+	// the manager stops its session controllers (which read the global
+	// ProtocolHandlers map from their run loops) before the stub is removed
+	// from that map.
+	registerStubSyncProtocolHandler(t)
+
 	mgr, err := synchronization.NewManagerWithoutPersistence(logging.NewLoggerOnSlogger(slog.Default()))
 	test.That(t, err, test.ShouldBeNil)
 	t.Cleanup(mgr.Shutdown)
-
-	registerStubSyncProtocolHandler(t)
 
 	daemon := newRemoteDaemon(&echoConnector{}, slog.LevelDebug)
 
@@ -295,11 +299,14 @@ func TestSyncFilesToConnectionResolvesRelativeSourceDir(t *testing.T) {
 
 	t.Setenv("MUTAGEN_DATA_DIRECTORY", t.TempDir())
 
+	// Before the Shutdown cleanup, so LIFO cleanup stops session controllers
+	// before the stub leaves the global ProtocolHandlers map (see
+	// newSyncTestConn).
+	registerStubSyncProtocolHandler(t)
+
 	syncMgr, err := synchronization.NewManagerWithoutPersistence(logging.NewLoggerOnSlogger(slog.Default()))
 	test.That(t, err, test.ShouldBeNil)
 	t.Cleanup(syncMgr.Shutdown)
-
-	registerStubSyncProtocolHandler(t)
 
 	srv := &Server{
 		connMgr: connMgr,

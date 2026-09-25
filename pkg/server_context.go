@@ -11,7 +11,6 @@ type ctxKey int
 
 const (
 	ctxKeyOOBWriter ctxKey = iota
-	ctxKeyConnRemoteClientConn
 )
 
 // OOBWriterFromContext attempts to grab an OOB writer from context and if it's not found, the returned writer

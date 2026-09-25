@@ -343,7 +343,7 @@ func (srv *Server) InitializeSSHConnection(
 	// TODO(erd): Make the code for this the same path as docker to have no bugs
 	srv.rootConfig.Connections = append(srv.rootConfig.Connections, ConnectionConfig{
 		Name:        conn.Name(),
-		Destination: conn.daemon.Destination(),
+		Destination: conn.lockedDaemon().Destination(),
 		LocalRoot:   localRoot,
 		RemoteRoot:  conn.RemoteRoot(),
 		Background:  background,
@@ -390,7 +390,7 @@ func (srv *Server) InitializeContainerConnection(
 
 	srv.rootConfig.Connections = append(srv.rootConfig.Connections, ConnectionConfig{
 		Name:        conn.Name(),
-		Destination: conn.daemon.Destination(),
+		Destination: conn.lockedDaemon().Destination(),
 		LocalRoot:   localRoot,
 		RemoteRoot:  conn.RemoteRoot(),
 		Background:  background,
@@ -664,9 +664,18 @@ func (srv *Server) SyncFilesToConnection(
 		return nil, err
 	}
 
+	// Resolve the source to its canonical absolute form up front (relative
+	// paths resolve against the connection's local root, never the daemon's
+	// cwd). All downstream uses - mode/include lookups, the default remote
+	// path, and the session itself - then agree on one spelling.
+	sourceDir, err := canonicalizeSyncFromLocal(conn.LocalRoot(), req.GetSourceDir())
+	if err != nil {
+		return nil, err
+	}
+
 	toRemote := req.GetDestDir()
 	if toRemote == "" {
-		toRemote = defaultSyncRemotePath(conn.HomeDir(), srv.identity, req.GetSourceDir())
+		toRemote = defaultSyncRemotePath(conn.HomeDir(), srv.identity, sourceDir)
 	}
 
 	if err := validateSyncModes(req.GetDefaultFileMode(), req.GetDefaultDirectoryMode()); err != nil {
@@ -677,7 +686,7 @@ func (srv *Server) SyncFilesToConnection(
 	// configured for this sync so a bare graft sync does not reset them
 	// (e.g. right after a daemon restart, before reconcile has run).
 	fileMode, dirMode := req.GetDefaultFileMode(), req.GetDefaultDirectoryMode()
-	configFileMode, configDirMode := srv.rootConfig.SyncModesFor(req.GetToConnectionName(), req.GetSourceDir())
+	configFileMode, configDirMode := srv.rootConfig.SyncModesFor(req.GetToConnectionName(), sourceDir)
 
 	if fileMode == "" {
 		fileMode = configFileMode
@@ -693,11 +702,11 @@ func (srv *Server) SyncFilesToConnection(
 	// mode inheritance above.
 	syncInclude := req.GetSyncInclude()
 	if len(syncInclude) == 0 {
-		syncInclude = srv.rootConfig.SyncIncludesFor(req.GetToConnectionName(), req.GetSourceDir())
+		syncInclude = srv.rootConfig.SyncIncludesFor(req.GetToConnectionName(), sourceDir)
 	}
 
 	syncIntent := SynchronizationIntent{
-		FromLocal:            req.GetSourceDir(),
+		FromLocal:            sourceDir,
 		ToRemote:             toRemote,
 		SyncGit:              req.GetSyncGit(),
 		SyncInclude:          syncInclude,
@@ -832,32 +841,41 @@ func (srv *Server) ForwardSSHAgent(server graftv1.GraftService_ForwardSSHAgentSe
 	// Sockets are keyed per origin connection name so connections sharing
 	// this remote daemon (same host+identity) can have independent
 	// forwarding settings; see StartCommand.origin_connection_name and
-	// runLocalCommand's matching lookup. The local daemon already dedupes
-	// concurrent forward requests per (daemon, connection) pair (see
-	// remoteDaemon.tryBeginAgentForward), so this should only trip if
-	// something else calls this RPC directly while a forward for the same
-	// connection is already active.
+	// runLocalCommand's matching lookup. The local daemon dedupes concurrent
+	// forward requests per (daemon, connection) pair (see
+	// remoteDaemon.tryBeginAgentForward), so an existing entry here means
+	// the previous stream's cleanup never ran (its server-side context
+	// outlived the local side). The old forward is then stale by definition:
+	// close its listener so its Accept loop unwinds, and adopt the new
+	// stream. (Rejecting the new stream instead sent the local side into a
+	// hot retry loop - ~146k errors at ~120/min in production.)
 	srv.serverMu.Lock()
 
-	if _, active := srv.sshAuthSockPaths[connName]; active {
-		srv.serverMu.Unlock()
-		listener.Close()
-		os.Remove(sockFile.Name())
-
-		return errors.New("ssh agent forwarding is already active for this connection")
-	}
-
 	if srv.sshAuthSockPaths == nil {
-		srv.sshAuthSockPaths = map[string]string{}
+		srv.sshAuthSockPaths = map[string]*sshAgentForward{}
 	}
 
-	srv.sshAuthSockPaths[connName] = sockFile.Name()
+	if old, active := srv.sshAuthSockPaths[connName]; active {
+		old.listener.Close()
+		os.Remove(old.sockPath)
+	}
+
+	entry := &sshAgentForward{sockPath: sockFile.Name(), listener: listener}
+	srv.sshAuthSockPaths[connName] = entry
 	srv.serverMu.Unlock()
 
 	defer func() {
+		// Remove only our own entry: a newer forward may have replaced it
+		// while this handler was parked in Accept.
 		srv.serverMu.Lock()
-		delete(srv.sshAuthSockPaths, connName)
+
+		if srv.sshAuthSockPaths[connName] == entry {
+			delete(srv.sshAuthSockPaths, connName)
+		}
+
 		srv.serverMu.Unlock()
+
+		os.Remove(sockFile.Name())
 	}()
 
 	// listener.Accept() only unblocks on a new connection or a closed

@@ -80,15 +80,15 @@ func (mgr *ConnectionManager) getOrCreateDaemonForConnection(
 	if conn, ok := mgr.connections[name]; ok {
 		mgr.connMgrMu.Unlock()
 
-		if conn.daemon.Destination() != destURL.String() {
+		if conn.lockedDaemon().Destination() != destURL.String() {
 			return nil, nil, errors.WrapSuffix(
 				errConflictingDestinationSameName,
-				fmt.Sprintf("other_destination='%s',name='%s'", conn.daemon.Destination(), name))
+				fmt.Sprintf("other_destination='%s',name='%s'", conn.lockedDaemon().Destination(), name))
 		}
 
 		slog.DebugContext(ctx, "connection already initialized", "destination", destURL.String())
 
-		return conn.daemon, conn, nil
+		return conn.lockedDaemon(), conn, nil
 	}
 
 	mgr.connMgrMu.Unlock()
@@ -746,11 +746,11 @@ func (mgr *ConnectionManager) remove(ctx context.Context, name string, safely bo
 	mgr.connMgrMu.Lock()
 
 	delete(mgr.connections, name)
-	mgr.updateDaemonRemoteRoots(conn.daemon)
+	mgr.updateDaemonRemoteRoots(conn.lockedDaemon())
 	mgr.writeConnectionRootsFile()
 
 	// Decrement daemon ref count and destroy if last connection.
-	mgr.releaseDaemon(conn.daemon)
+	mgr.releaseDaemon(conn.lockedDaemon())
 
 	mgr.connMgrMu.Unlock()
 

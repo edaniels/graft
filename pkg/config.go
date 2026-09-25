@@ -99,7 +99,9 @@ func (conf *RootConfig) Persist(toPath string) error {
 // SyncModesFor returns the configured permission modes for the named
 // connection's synchronization from fromLocal, or empty strings when none
 // are recorded. Requests that carry no modes inherit these, so a bare graft
-// sync does not reset modes configured elsewhere.
+// sync does not reset modes configured elsewhere. Stored entries are
+// canonicalized before comparison (callers pass canonical paths): a legacy
+// relative entry like "." still matches.
 func (conf *RootConfig) SyncModesFor(connName, fromLocal string) (string, string) {
 	conf.configMu.Lock()
 	defer conf.configMu.Unlock()
@@ -110,7 +112,7 @@ func (conf *RootConfig) SyncModesFor(connName, fromLocal string) (string, string
 		}
 
 		for _, syncConf := range conn.Synchronizations {
-			if syncConf.FromLocal == fromLocal {
+			if canonicalFromLocal(conn.LocalRoot, syncConf.FromLocal) == fromLocal {
 				return syncConf.DefaultFileMode, syncConf.DefaultDirectoryMode
 			}
 		}
@@ -134,13 +136,27 @@ func (conf *RootConfig) SyncIncludesFor(connName, fromLocal string) []string {
 		}
 
 		for _, syncConf := range conn.Synchronizations {
-			if syncConf.FromLocal == fromLocal {
+			if canonicalFromLocal(conn.LocalRoot, syncConf.FromLocal) == fromLocal {
 				return syncConf.SyncInclude
 			}
 		}
 	}
 
 	return nil
+}
+
+// canonicalFromLocal best-effort canonicalizes a stored sync source against
+// its connection's local root, falling back to the raw value when it can't
+// resolve (establishment surfaces the error for that entry anyway). Lets the
+// mode/include lookups above match legacy relative config entries (e.g. a
+// persisted ".") against the canonical path callers query with.
+func canonicalFromLocal(localRoot, fromLocal string) string {
+	canonical, err := canonicalizeSyncFromLocal(localRoot, fromLocal)
+	if err != nil {
+		return fromLocal
+	}
+
+	return canonical
 }
 
 // always update this when new top level fields are added.

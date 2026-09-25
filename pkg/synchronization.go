@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -45,6 +44,122 @@ func syncSessionName(connName string, intent SynchronizationIntent) string {
 	h.Write([]byte(filepath.Clean(intent.ToRemote)))
 
 	return graftSyncNamePrefix + hex.EncodeToString(h.Sum(nil)[:10])
+}
+
+// resolveSyncSourceDir resolves a user-provided sync source against the
+// client's cwd when it's relative ("" means the cwd itself). Only the client
+// knows the invoking shell's cwd, so this must happen client-side: "graft
+// sync ." from a subdirectory of the connection root must sync that
+// subdirectory, not the whole root. The daemon canonicalizes the result
+// against the connection's local root as a backstop (see
+// canonicalizeSyncFromLocal), which is a no-op for the absolute path this
+// returns.
+func resolveSyncSourceDir(cwd, sourceDir string) string {
+	if sourceDir == "" {
+		return cwd
+	}
+
+	if filepath.IsAbs(sourceDir) {
+		return filepath.Clean(sourceDir)
+	}
+
+	return filepath.Join(cwd, sourceDir)
+}
+
+// canonicalizeSyncFromLocal resolves a sync intent's local source to an
+// absolute, cleaned path before it reaches mutagen. Relative paths resolve
+// against the connection's local root; deliberately NOT filepath.Abs, whose
+// base is the process cwd: the daemon's cwd is typically /, so a "." source
+// would resolve to the filesystem root and sync the entire disk (this
+// happened - a persisted "fromLocal: ." intent watched / for days). An empty
+// source, a relative source with no local root to resolve against, and any
+// resolution to the filesystem root are rejected as obviously invalid.
+//
+// Canonicalization happens before syncSessionName hashing and active-sync map
+// lookups, so "." and the absolute spelling of one tree name and key a single
+// session rather than spawning duplicates.
+func canonicalizeSyncFromLocal(localRoot, fromLocal string) (string, error) {
+	if fromLocal == "" {
+		return "", errors.New("sync source directory is required")
+	}
+
+	resolved := fromLocal
+	if !filepath.IsAbs(resolved) {
+		if localRoot == "" {
+			return "", errors.Errorf(
+				"sync source directory %q is relative and the connection has no local root to resolve it against",
+				fromLocal,
+			)
+		}
+
+		resolved = filepath.Join(localRoot, resolved)
+	}
+
+	resolved = filepath.Clean(resolved)
+
+	// A path equal to its own parent is a filesystem root ("/" on POSIX, a
+	// volume root on Windows). Syncing one is never intended and has
+	// catastrophic blast radius (watchers and full scans across every file).
+	if resolved == filepath.Dir(resolved) {
+		return "", errors.Errorf(
+			"sync source directory %q resolves to the filesystem root; refusing to sync an entire filesystem",
+			fromLocal,
+		)
+	}
+
+	return resolved, nil
+}
+
+// checkSyncOverlap returns an error when fromLocal contains, or is contained
+// by, an existing active sync's local source on the same connection.
+// Overlapping sessions double-watch the shared tree; worse, a two-way session
+// containing a .git directory fights the one-way .git replica session
+// managing that same directory (observed with the fromLocal:"." incident,
+// where / contained another sync's .git). Exact-key matches are the caller's
+// update path and are not overlap.
+func checkSyncOverlap(active map[string]activeSync, fromLocal string) error {
+	for existing := range active {
+		if existing == fromLocal {
+			continue
+		}
+
+		if _, ok := hasPathPrefix(fromLocal, existing); ok {
+			return errors.Errorf(
+				"sync source %q overlaps existing sync %q on this connection; remove one of them before establishing the other",
+				fromLocal, existing,
+			)
+		}
+
+		if _, ok := hasPathPrefix(existing, fromLocal); ok {
+			return errors.Errorf(
+				"sync source %q overlaps existing sync %q on this connection; remove one of them before establishing the other",
+				fromLocal, existing,
+			)
+		}
+	}
+
+	return nil
+}
+
+// canonicalizeSyncIntentConfigs returns confs with each FromLocal resolved to
+// its canonical absolute form (see canonicalizeSyncFromLocal). Intents that
+// fail to canonicalize are kept as-is; establishment surfaces their errors.
+// Callers comparing config intents against live (canonical) state - the
+// reconcile loop and the orphan reaper - use this so a relative config entry
+// and its canonical live sync compare equal instead of looking perpetually
+// missing/orphaned.
+func canonicalizeSyncIntentConfigs(localRoot string, confs []SynchronizationIntentConfig) []SynchronizationIntentConfig {
+	out := make([]SynchronizationIntentConfig, 0, len(confs))
+
+	for _, conf := range confs {
+		if canonical, err := canonicalizeSyncFromLocal(localRoot, conf.FromLocal); err == nil {
+			conf.FromLocal = canonical
+		}
+
+		out = append(out, conf)
+	}
+
+	return out
 }
 
 // findExistingSessionByName scans loaded sessions for a Name match, returning
@@ -319,31 +434,47 @@ func (i SynchronizationIntent) AsConfig() SynchronizationIntentConfig {
 	return SynchronizationIntentConfig(i)
 }
 
-// ConnRemoteClientConnFromContext returns a connection's backing gRPC connection via the given context.
-//
-// See: ContextWithConnRemoteClientConn.
-func ConnRemoteClientConnFromContext(ctx context.Context) (*grpc.ClientConn, error) {
-	conn, ok := ctx.Value(ctxKeyConnRemoteClientConn).(*grpc.ClientConn)
-	if !ok {
-		return nil, errors.New("expected connection's remote client connection in context")
-	}
-
-	return conn, nil
-}
-
-// ContextWithConnRemoteClientConn associates the given connection's backing gRPC connection with the context.
-// This is used to transit the connection through the graft<->mutagen API boundary based on how mutagen protocol
-// handlers work.
-func ContextWithConnRemoteClientConn(ctx context.Context, conn *grpc.ClientConn) context.Context {
-	return context.WithValue(ctx, ctxKeyConnRemoteClientConn, conn)
-}
-
+// mutagenSyncProtocolHandler connects mutagen's beta endpoints to graft
+// connections.
 type mutagenSyncProtocolHandler struct {
-	server *Server
+	// resolveConn maps a beta URL host (the connection name) to that
+	// connection's current remote client conn. Mutagen's controller runs
+	// Connect on context.Background() (see controller.run), so values can't
+	// be threaded through the context to pick a connection - an earlier
+	// design tried exactly that and silently fell back on every connect.
+	// Resolving by URL host is the normal path, and it stays correct even
+	// when the named connection differs from the one the session creator
+	// had in mind.
+	resolveConn func(name string) (*grpc.ClientConn, error)
 }
 
-// Connect implements [synchronization.ProtocolHandler] for mutagen. The destination is completely ignored
-// since the destination is considered to be the connection available via the context variable.
+// syncConnResolver builds the resolveConn for the protocol handler: look up
+// the named connection and return its daemon's current remote client conn
+// (failing while the daemon has no live transport, so the controller retries
+// rather than dialing through a nil conn).
+//
+// The resolver runs inside mutagen's synchronous Create/Resume calls, which
+// EstablishSynchronization makes while holding conn.mu, and inside
+// controller-initiated background reconnects, which can overlap a Terminate
+// that EstablishSynchronization waits on. It must therefore never acquire
+// conn.mu: LookupConnection skips the Connected-state check (which would take
+// it) and lockedDaemon is lock-free. A miss is fine either way: the daemon
+// either has a live transport to return or the error makes the controller
+// retry later.
+func syncConnResolver(mgr *ConnectionManager) func(name string) (*grpc.ClientConn, error) {
+	return func(name string) (*grpc.ClientConn, error) {
+		conn, err := mgr.LookupConnection(name)
+		if err != nil {
+			return nil, err
+		}
+
+		return conn.lockedDaemon().lockedRemoteClientConn()
+	}
+}
+
+// Connect implements [synchronization.ProtocolHandler] for mutagen. The
+// destination's gRPC transport comes from the connection named by the URL
+// host; the URL path is the remote sync root handed to the endpoint.
 func (handler *mutagenSyncProtocolHandler) Connect(
 	ctx context.Context,
 	logger *logging.Logger,
@@ -360,21 +491,9 @@ func (handler *mutagenSyncProtocolHandler) Connect(
 		panic("non-graft URL dispatched to graft protocol handler")
 	}
 
-	remoteConn, err := ConnRemoteClientConnFromContext(ctx)
+	remoteConn, err := handler.resolveConn(url.GetHost())
 	if err != nil {
-		// TODO(erd): Document under what conditions the remote client conn is unavailable and verify fallback behavior.
-		slog.ErrorContext(ctx, "failed to get remote client conn from context; trying from conn itself", "error", err)
-
-		slog.DebugContext(ctx, "getting connection for endpoint", "name", url.GetHost())
-
-		conn, connectErr := handler.server.connMgr.Connection(url.GetHost())
-		if connectErr != nil {
-			return nil, connectErr
-		}
-
-		// Document the deadlock scenario. This probably doesn't happen when the sync manager is retrying.
-		// Note(erd): Original deadlock scenario unclear; verify before modifying sync retry logic.
-		remoteConn = conn.daemon.RemoteClientConn()
+		return nil, errors.WrapPrefix(err, "error resolving connection for sync endpoint "+url.GetHost())
 	}
 
 	client := graftv1.NewGraftServiceClient(remoteConn)

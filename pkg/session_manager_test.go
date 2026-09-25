@@ -64,11 +64,13 @@ func TestWriteSessionConnectionFile(t *testing.T) {
 
 // TODO(erd): unify with newConnection so tests exercise the real creation path.
 func newTestConnection(name, localRoot string) *Connection {
-	return &Connection{
+	conn := &Connection{
 		name:      name,
 		localRoot: localRoot,
-		daemon:    &remoteDaemon{state: ConnectionStateConnected},
 	}
+	conn.daemon.Store(&remoteDaemon{state: ConnectionStateConnected})
+
+	return conn
 }
 
 // TODO(erd): unify with NewSessionManager/NewConnectionManager so tests exercise real construction.

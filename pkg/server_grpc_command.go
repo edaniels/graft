@@ -638,7 +638,10 @@ func (srv *Server) runLocalCommand(ctx context.Context, cmdReq *graftv1.StartCom
 
 	srv.serverMu.Lock()
 
-	sockPath := srv.sshAuthSockPaths[cmdReq.GetOriginConnectionName()]
+	var sockPath string
+	if fwd := srv.sshAuthSockPaths[cmdReq.GetOriginConnectionName()]; fwd != nil {
+		sockPath = fwd.sockPath
+	}
 
 	srv.serverMu.Unlock()
 

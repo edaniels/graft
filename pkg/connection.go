@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mutagen-io/mutagen/pkg/selection"
@@ -77,7 +78,13 @@ func (s activeSync) inheritModesInto(intent *SynchronizationIntent) {
 // It holds per-connection metadata (name, roots, forward intents, synchronizations)
 // and derives its state from the daemon.
 type Connection struct {
-	daemon *remoteDaemon
+	// daemon is atomic (not guarded by mu) so it can be read in contexts that
+	// already hold conn.mu: the mutagen sync protocol resolver reaches the
+	// daemon from within syncManager.Create/Resume, which
+	// EstablishSynchronization calls while holding mu. A mutex-guarded read
+	// self-deadlocks there (mutagen connects endpoints synchronously on the
+	// caller's goroutine).
+	daemon atomic.Pointer[remoteDaemon]
 
 	name       string
 	localRoot  string
@@ -94,14 +101,16 @@ type Connection struct {
 
 // newConnection creates a connection backed by the given daemon.
 func newConnection(daemon *remoteDaemon, name, localRoot, remoteRoot string, background bool) *Connection {
-	return &Connection{
-		daemon:           daemon,
+	conn := &Connection{
 		name:             name,
 		localRoot:        localRoot,
 		remoteRoot:       remoteRoot,
 		background:       background,
 		synchronizations: map[string]activeSync{},
 	}
+	conn.daemon.Store(daemon)
+
+	return conn
 }
 
 // Background returns whether this is a background connection excluded from CWD-based auto-selection.
@@ -112,7 +121,7 @@ func (conn *Connection) Background() bool {
 // remoteServiceClient returns a service client against the connection's
 // remote daemon.
 func (conn *Connection) remoteServiceClient() (graftv1.GraftServiceClient, error) {
-	cc, err := conn.daemon.lockedRemoteClientConn()
+	cc, err := conn.lockedDaemon().lockedRemoteClientConn()
 	if err != nil {
 		return nil, err
 	}
@@ -493,20 +502,17 @@ func (conn *Connection) SetRoots(localRoot, remoteRoot string) error {
 	return nil
 }
 
-// lockedDaemon returns the connection's daemon, safe for concurrent access.
+// lockedDaemon returns the connection's current daemon. It is lock-free (the
+// pointer is atomic) so callers holding conn.mu - notably
+// EstablishSynchronization via mutagen's synchronous endpoint connects - and
+// the sync protocol resolver can use it without self-deadlocking.
 func (conn *Connection) lockedDaemon() *remoteDaemon {
-	conn.mu.Lock()
-	defer conn.mu.Unlock()
-
-	return conn.daemon
+	return conn.daemon.Load()
 }
 
 // updateDaemon replaces the connection's daemon pointer (e.g. after supersede).
 func (conn *Connection) updateDaemon(d *remoteDaemon) {
-	conn.mu.Lock()
-	defer conn.mu.Unlock()
-
-	conn.daemon = d
+	conn.daemon.Store(d)
 }
 
 // State returns the connection state. If this connection is closed, it returns Closed.
@@ -514,23 +520,22 @@ func (conn *Connection) updateDaemon(d *remoteDaemon) {
 func (conn *Connection) State() (ConnectionState, string) {
 	conn.mu.Lock()
 	closed := conn.closed
-	d := conn.daemon
 	conn.mu.Unlock()
 
 	if closed {
 		return ConnectionStateClosed, ""
 	}
 
-	return d.State()
+	return conn.lockedDaemon().State()
 }
 
 func (conn *Connection) HomeDir() string {
-	return conn.daemon.HomeDir()
+	return conn.lockedDaemon().HomeDir()
 }
 
 // DumpLogs delegates to the daemon.
 func (conn *Connection) DumpLogs(ctx context.Context) (string, string, error) {
-	return conn.daemon.DumpLogs(ctx)
+	return conn.lockedDaemon().DumpLogs(ctx)
 }
 
 // Synchronizations returns the active synchronizations for this connection.
@@ -570,6 +575,24 @@ func (conn *Connection) EstablishSynchronization(
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
+	// Canonicalize the local source before any map lookup or session naming:
+	// relative paths resolve against the connection's local root (never the
+	// daemon's cwd), so "." and the absolute spelling of one tree key and
+	// name a single session.
+	canonicalFrom, err := canonicalizeSyncFromLocal(conn.localRoot, syncIntent.FromLocal)
+	if err != nil {
+		return nil, err
+	}
+
+	syncIntent.FromLocal = canonicalFrom
+
+	// Overlap is rejected outright: two sessions over one tree double-watch
+	// it and can fight over content (a two-way session containing a .git
+	// directory battles the one-way replica session managing it).
+	if overlapErr := checkSyncOverlap(conn.synchronizations, syncIntent.FromLocal); overlapErr != nil {
+		return nil, overlapErr
+	}
+
 	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
 		existing.inheritModesInto(&syncIntent)
 
@@ -590,7 +613,7 @@ func (conn *Connection) EstablishSynchronization(
 		return nil, nil
 	}
 
-	resolvedPath, resolveErr := conn.daemon.Connector().RunOneShotCommand(ctx, "echo "+syncIntent.ToRemote)
+	resolvedPath, resolveErr := conn.lockedDaemon().Connector().RunOneShotCommand(ctx, "echo "+syncIntent.ToRemote)
 	if resolveErr != nil {
 		return nil, errors.WrapPrefix(resolveErr, "error resolving sync to remote path")
 	}
@@ -640,16 +663,17 @@ func (conn *Connection) EstablishSynchronization(
 	// otherwise world-readable tree.
 	mkdirCmd := makeSyncRootCommand(syncIntent.ToRemote, betaConfig.GetDefaultDirectoryMode())
 
-	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
+	if _, mkdirErr := conn.lockedDaemon().Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
 		return nil, errors.WrapPrefix(mkdirErr, "error making directory for sync to remote path")
 	}
 
-	cc, err := conn.daemon.lockedRemoteClientConn()
-	if err != nil {
+	// Fail fast when the daemon has no live transport rather than creating a
+	// session that would sit in a reconnect loop.
+	if _, connErr := conn.lockedDaemon().lockedRemoteClientConn(); connErr != nil {
 		return nil, errors.New("connection is not available")
 	}
 
-	sessionID, err := conn.establishSession(ctx, cc, syncManager,
+	sessionID, err := conn.establishSession(ctx, syncManager,
 		syncSessionName(conn.Name(), syncIntent),
 		syncIntent.FromLocal, syncIntent.ToRemote,
 		&synchronization.Configuration{
@@ -685,7 +709,7 @@ func (conn *Connection) EstablishSynchronization(
 	conn.synchronizations[syncIntent.FromLocal] = entry
 
 	if syncIntent.SyncGit {
-		gitCloseFunc, gitErr := conn.establishGitReplica(ctx, cc, syncManager, syncIntent)
+		gitCloseFunc, gitErr := conn.establishGitReplica(ctx, syncManager, syncIntent)
 		if gitErr != nil {
 			return nil, gitErr
 		}
@@ -708,12 +732,11 @@ func (conn *Connection) applyGitReplicaFlip(
 	existing activeSync,
 ) error {
 	if syncIntent.SyncGit {
-		cc, err := conn.daemon.lockedRemoteClientConn()
-		if err != nil {
+		if _, err := conn.lockedDaemon().lockedRemoteClientConn(); err != nil {
 			return errors.New("connection is not available")
 		}
 
-		gitCloseFunc, err := conn.establishGitReplica(ctx, cc, syncManager, syncIntent)
+		gitCloseFunc, err := conn.establishGitReplica(ctx, syncManager, syncIntent)
 		if err != nil {
 			return err
 		}
@@ -741,7 +764,6 @@ func (conn *Connection) applyGitReplicaFlip(
 // .git directory, the returned func is a no-op.
 func (conn *Connection) establishGitReplica(
 	ctx context.Context,
-	cc *grpc.ClientConn,
 	syncManager *synchronization.Manager,
 	syncIntent SynchronizationIntent,
 ) (func(), error) {
@@ -772,11 +794,11 @@ func (conn *Connection) establishGitReplica(
 
 	mkdirCmd := makeSyncRootCommand(gitIntent.ToRemote, replicaDirMode)
 
-	if _, mkdirErr := conn.daemon.Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
+	if _, mkdirErr := conn.lockedDaemon().Connector().RunOneShotCommand(ctx, mkdirCmd); mkdirErr != nil {
 		return nil, errors.WrapPrefix(mkdirErr, "error making directory for git replica remote path")
 	}
 
-	sessionID, err := conn.establishSession(ctx, cc, syncManager,
+	sessionID, err := conn.establishSession(ctx, syncManager,
 		syncSessionName(conn.Name(), gitIntent),
 		gitIntent.FromLocal, gitIntent.ToRemote,
 		&synchronization.Configuration{
@@ -802,7 +824,6 @@ func (conn *Connection) establishGitReplica(
 // stops locally-deleted files from coming back on the next sync.
 func (conn *Connection) establishSession(
 	ctx context.Context,
-	cc *grpc.ClientConn,
 	syncManager *synchronization.Manager,
 	sessionName string,
 	alphaPath, betaPath string,
@@ -813,6 +834,16 @@ func (conn *Connection) establishSession(
 		ctx, syncManager, sessionName)
 	if lookupErr != nil {
 		return "", errors.WrapPrefix(lookupErr, "error looking up existing sync session")
+	}
+
+	// Defense in depth: mutagen validates local URLs only when they're built
+	// via urlpkg.Parse, which graft bypasses below. A relative path here would
+	// resolve against the daemon's cwd (typically /) inside the local
+	// endpoint, and a session persisted with one fails to load on the next
+	// daemon start ("local URL with relative path"), becoming invisible to
+	// lookup and the orphan reaper while duplicates pile up.
+	if !filepath.IsAbs(alphaPath) {
+		return "", errors.Errorf("sync alpha path %q is not absolute; refusing to create session", alphaPath)
 	}
 
 	// A session's configuration is fixed at creation (mutagen has no
@@ -836,7 +867,7 @@ func (conn *Connection) establishSession(
 	if existingID != "" {
 		if existingPaused {
 			if resumeErr := syncManager.Resume(
-				ContextWithConnRemoteClientConn(ctx, cc),
+				ctx,
 				&selection.Selection{Specifications: []string{existingID}},
 				"",
 			); resumeErr != nil {
@@ -848,7 +879,7 @@ func (conn *Connection) establishSession(
 	}
 
 	sessionID, err := syncManager.Create(
-		ContextWithConnRemoteClientConn(ctx, cc),
+		ctx,
 		&urlpkg.URL{
 			Protocol: urlpkg.Protocol_Local,
 			Path:     alphaPath,
@@ -955,7 +986,7 @@ func (conn *Connection) Hash(resp *graftv1.StatusResponse) (uint32, bool) {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
-	d := conn.daemon
+	d := conn.lockedDaemon()
 	state, _ := d.State()
 
 	hasher := fnv.New32()
@@ -1102,7 +1133,7 @@ func buildLocalBinary(ctx context.Context, osName, archName string) (string, err
 }
 
 func (conn *Connection) AvailableCommands() []string {
-	global, byDir := conn.daemon.AvailableCommands()
+	global, byDir := conn.lockedDaemon().AvailableCommands()
 
 	collected := map[string]struct{}{}
 	// TODO(erd): we should make the env provider actually dictate the ordering of commands so that we don't have

@@ -391,18 +391,18 @@ func TestRemoteDaemonInstallGuard(t *testing.T) {
 		conn1 := newConnection(daemon, "conn1", "", "", false)
 		conn2 := newConnection(daemon, "conn2", "", "", false)
 
-		test.That(t, conn1.daemon.alreadyInstalled(), test.ShouldBeFalse)
-		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeFalse)
+		test.That(t, conn1.lockedDaemon().alreadyInstalled(), test.ShouldBeFalse)
+		test.That(t, conn2.lockedDaemon().alreadyInstalled(), test.ShouldBeFalse)
 
 		// conn1 installs
-		conn1.daemon.markInstalled()
+		conn1.lockedDaemon().markInstalled()
 
 		// conn2 sees it
-		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeTrue)
+		test.That(t, conn2.lockedDaemon().alreadyInstalled(), test.ShouldBeTrue)
 
 		// Daemon goes down; reset
-		conn1.daemon.resetInstallState()
-		test.That(t, conn2.daemon.alreadyInstalled(), test.ShouldBeFalse)
+		conn1.lockedDaemon().resetInstallState()
+		test.That(t, conn2.lockedDaemon().alreadyInstalled(), test.ShouldBeFalse)
 	})
 }
 

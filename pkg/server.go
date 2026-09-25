@@ -3,6 +3,7 @@ package graft
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -51,13 +52,24 @@ type Server struct {
 	buffLineWriter         *BufferedLineWriter
 
 	identity string
-	// sshAuthSockPaths holds a forwarded SSH agent socket path per
+	// sshAuthSockPaths holds the active forwarded SSH agent per
 	// origin_connection_name (see StartCommand), so connections sharing this
 	// remote daemon can have independent agent-forwarding settings. Guarded
 	// by serverMu. Only populated on ServerRoleRemote.
-	sshAuthSockPaths map[string]string
+	sshAuthSockPaths map[string]*sshAgentForward
 	startedAt        time.Time
 	lastOrphanReap   time.Time
+}
+
+// sshAgentForward tracks one connection's active server-side agent forward:
+// the unix socket commands dial via SSH_AUTH_SOCK and the listener feeding
+// it. The listener is kept so a stale forward can be force-closed when a
+// replacement stream arrives (the old stream is by definition dead or dying
+// when a new one shows up; rejecting the new one instead caused a local-side
+// hot retry loop).
+type sshAgentForward struct {
+	sockPath string
+	listener net.Listener
 }
 
 // NewServer returns a new daemon capable of serving any server role. All configuration is specified
@@ -124,21 +136,6 @@ func NewServer(
 		return nil, errors.Wrap(setErr)
 	}
 
-	// Remote daemons don't own sync sessions, so the non-persistent manager
-	// is fine. They still need MUTAGEN_DATA_DIRECTORY set above for the
-	// remote endpoint's cache and staging.
-	var synchronizationManager *synchronization.Manager
-
-	if role == ServerRoleLocal {
-		synchronizationManager, err = synchronization.NewManager(logging.NewLoggerOnSlogger(slog.Default()))
-	} else {
-		synchronizationManager, err = synchronization.NewManagerWithoutPersistence(logging.NewLoggerOnSlogger(slog.Default()))
-	}
-
-	if err != nil {
-		return nil, errors.Wrap(err)
-	}
-
 	var sockIdentity string
 	if role == ServerRoleRemote && identity != "" {
 		sockIdentity = identity
@@ -152,24 +149,70 @@ func NewServer(
 	sockDir := filepath.Dir(sockPath)
 	pidPath := filepath.Join(sockDir, "graftd.pid")
 
-	if err := os.MkdirAll(sockDir, DirPerms); err != nil {
-		return nil, errors.Wrap(err)
+	if mkErr := os.MkdirAll(sockDir, DirPerms); mkErr != nil {
+		return nil, errors.Wrap(mkErr)
 	}
 
+	// Replace any previous daemon BEFORE loading sessions below: loading
+	// first meant a replacement daemon did its session I/O (and then died on
+	// the socket bind) while the old daemon lived on, so --replace failed to
+	// replace. If the old daemon can't be killed, abort rather than start a
+	// second daemon over it.
 	if replace {
-		killDaemonByPIDFile(pidPath)
+		if killErr := killDaemonByPIDFile(pidPath); killErr != nil {
+			return nil, errors.WrapPrefix(killErr, "error replacing existing daemon")
+		}
 
 		// The killed daemon's Close() may have already removed the socket.
 		if removeErr := os.Remove(sockPath); removeErr != nil && !os.IsNotExist(removeErr) {
 			return nil, errors.Wrap(removeErr)
 		}
-	} else if _, err := os.Stat(sockPath); err == nil {
+	} else if _, statErr := os.Stat(sockPath); statErr == nil {
 		argsClone := slices.Clone(os.Args)
 		argsClone = append(argsClone, "--replace")
 
 		return nil, errors.New(
 			"daemon already running on " + sockPath + " or didn't cleanly shutdown (use " +
 				strings.Join(argsClone, " ") + " if needed)")
+	}
+
+	// Remote daemons don't own sync sessions, so the non-persistent manager
+	// is fine. They still need MUTAGEN_DATA_DIRECTORY set above for the
+	// remote endpoint's cache and staging.
+	var synchronizationManager *synchronization.Manager
+
+	// Mutagen's loggers run through the bridge so sync loop terminations
+	// (logged at DEBUG by mutagen) reach daemon logs at WARN; everything else
+	// keeps the daemon's configured level.
+	mutagenLogBridge := &mutagenSyncLogBridge{inner: slog.Default().Handler()}
+
+	if role == ServerRoleLocal {
+		loadFailures := newSessionLoadFailureCapture()
+		managerLogger := logging.NewLoggerOnSlogger(slog.New(&sessionLoadFailureLogHandler{
+			Handler: mutagenLogBridge,
+			capture: loadFailures,
+		}))
+
+		synchronizationManager, err = synchronization.NewManager(managerLogger)
+		if err == nil {
+			// Sessions that failed to load are invisible to every session
+			// lookup and to the orphan reaper; without quarantine, every
+			// daemon start would create a fresh duplicate under the same name
+			// while the broken file keeps failing to load (each duplicate
+			// cold-scanning from an empty ancestor archive). Move them aside.
+			if quarantineErr := quarantineUnloadableSyncSessions(
+				syncStateDir, synchronizationManager, loadFailures.snapshot(),
+			); quarantineErr != nil {
+				slog.Warn("error quarantining unloadable sync sessions", "error", quarantineErr)
+			}
+		}
+	} else {
+		synchronizationManager, err = synchronization.NewManagerWithoutPersistence(
+			logging.NewLoggerOnSlogger(slog.New(mutagenLogBridge)))
+	}
+
+	if err != nil {
+		return nil, errors.Wrap(err)
 	}
 
 	// Remote daemons own the commands they spawn; commands.json records the
@@ -199,7 +242,7 @@ func NewServer(
 		startedAt: time.Now(),
 	}
 	synchronization.ProtocolHandlers[urlpkg.Protocol(syncProtoNum)] = &mutagenSyncProtocolHandler{
-		server: server,
+		resolveConn: syncConnResolver(server.connMgr),
 	}
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(server.OOBUnaryServerInterceptor))
 	graftv1.RegisterGraftServiceServer(grpcServer, server)
@@ -523,7 +566,13 @@ func (srv *Server) reapOrphanSyncs(ctx context.Context, pending []ConnectionConf
 }
 
 func (srv *Server) reconcileSyncs(ctx context.Context, conn *Connection, conf ConnectionConfig) {
-	for _, intent := range computeMissingSyncs(conf.Synchronizations, conn.Synchronizations()) {
+	// Compare canonical spellings against live (canonical) state: a relative
+	// config entry like "." resolves against the connection's local root, so
+	// it must not look perpetually missing (which would log a spurious
+	// "established synchronization" every tick before no-op'ing).
+	desired := canonicalizeSyncIntentConfigs(conf.LocalRoot, conf.Synchronizations)
+
+	for _, intent := range computeMissingSyncs(desired, conn.Synchronizations()) {
 		shadowed, err := srv.connMgr.EstablishSynchronization(
 			ctx, conf.Name, intent, srv.synchronizationManager,
 		)
@@ -653,12 +702,15 @@ func computeMissingSyncs(desired []SynchronizationIntentConfig, active []Synchro
 // expectedSyncSessionNames returns the session names implied by the given
 // configs: one per synchronization, plus a .git replica name for each
 // synchronization that enables SyncGit. The orphan reaper terminates any
-// graft-owned session not in this set.
+// graft-owned session not in this set. Config intents are canonicalized
+// first: sessions are created under canonical (absolute) names, so a relative
+// config entry must name its session the same way or the reaper would
+// terminate the live session as an "orphan".
 func expectedSyncSessionNames(pending []ConnectionConfig) map[string]bool {
 	expected := make(map[string]bool)
 
 	for _, conf := range pending {
-		for _, s := range conf.Synchronizations {
+		for _, s := range canonicalizeSyncIntentConfigs(conf.LocalRoot, conf.Synchronizations) {
 			intent := SynchronizationIntentFromConfig(s)
 			expected[syncSessionName(conf.Name, intent)] = true
 

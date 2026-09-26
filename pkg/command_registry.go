@@ -575,25 +575,62 @@ func (reg *CommandRegistry) Remove(id string) {
 	reg.writeStateLocked()
 }
 
-// ReapExited removes exited, unattached commands older than ttl. It keeps
-// short-lived detached commands (e.g. an interactive `ls` whose terminal
-// vanished mid-run) from accumulating forever.
-func (reg *CommandRegistry) ReapExited(ttl time.Duration) {
+// ReapExited forgets exited, unattached commands, oldest exit first, only
+// while the output retained across all commands exceeds budget bytes. Under
+// budget, exited output is kept indefinitely so a late attach can still
+// replay it.
+func (reg *CommandRegistry) ReapExited(budget int64) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	var removed bool
+	type reapCandidate struct {
+		id       string
+		exitedAt time.Time
+		retained int64
+	}
+
+	var (
+		total      int64
+		candidates []reapCandidate
+	)
 
 	for id, mc := range reg.commands {
+		retained := mc.stdoutRing.RetainedBytes() + mc.stderrRing.RetainedBytes()
+		total += retained
+
 		mc.mu.Lock()
-		reapable := mc.exited && mc.current == nil && time.Since(mc.exitedAt) >= ttl
+		reapable := mc.exited && mc.current == nil
+		exitedAt := mc.exitedAt
 		mc.mu.Unlock()
 
 		if reapable {
-			delete(reg.commands, id)
-
-			removed = true
+			candidates = append(candidates, reapCandidate{id: id, exitedAt: exitedAt, retained: retained})
 		}
+	}
+
+	if total <= budget {
+		return
+	}
+
+	slices.SortFunc(candidates, func(a, b reapCandidate) int {
+		if c := a.exitedAt.Compare(b.exitedAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.id, b.id)
+	})
+
+	var removed bool
+
+	for _, candidate := range candidates {
+		if total <= budget {
+			break
+		}
+
+		delete(reg.commands, candidate.id)
+
+		total -= candidate.retained
+		removed = true
 	}
 
 	if removed {

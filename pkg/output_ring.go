@@ -184,6 +184,14 @@ func (r *outputRing) EndOffset() uint64 {
 	return r.start + uint64(len(r.buf))
 }
 
+// RetainedBytes returns how many bytes the ring currently holds.
+func (r *outputRing) RetainedBytes() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return int64(len(r.buf))
+}
+
 // ReadAt returns a copy of the data available at the given absolute offset. If
 // that offset has been evicted, reading begins at the earliest retained byte
 // and gotOffset reports where the returned data actually starts. When no data

@@ -322,9 +322,10 @@ const (
 	// commandReapInterval is how often exited, unattached managed commands
 	// are considered for forgetting.
 	commandReapInterval = time.Minute
-	// commandReapTTL is how long an exited, unattached managed command stays
-	// listed for a late attach before being forgotten.
-	commandReapTTL = 10 * time.Minute
+	// commandRetainBudget bounds the output retained across all managed
+	// commands. Exited, unattached commands stay listed for a late attach
+	// until it is exceeded, then the oldest are forgotten first.
+	commandRetainBudget = 1 << 30
 )
 
 // commandReapLoop periodically forgets exited managed commands nobody
@@ -338,7 +339,7 @@ func (srv *Server) commandReapLoop(runCtx context.Context) {
 		case <-runCtx.Done():
 			return
 		case <-ticker.C:
-			srv.cmdRegistry.ReapExited(commandReapTTL)
+			srv.cmdRegistry.ReapExited(commandRetainBudget)
 		}
 	}
 }

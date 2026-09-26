@@ -579,3 +579,47 @@ func TestCommandRegistryDetachAndKeep(t *testing.T) {
 	// Detaching with nobody attached reports as much.
 	test.That(t, managed.DetachAndKeep(), test.ShouldBeFalse)
 }
+
+func TestCommandRegistryReapExitedKeepsWithinBudget(t *testing.T) {
+	reg := NewCommandRegistry("")
+
+	start := func(display string) *ManagedCommand {
+		managed := startManagedCommand(t, reg, []string{"head", "-c", "100", "/dev/zero"}, ManagedCommandSpec{
+			Display:     display,
+			Persistence: persistenceKeep,
+		})
+		waitDone(t, managed)
+
+		return managed
+	}
+
+	oldest := start("oldest")
+	middle := start("middle")
+	newest := start("newest")
+
+	listed := func(managed *ManagedCommand) bool {
+		_, ok := reg.Get(managed.ID())
+
+		return ok
+	}
+
+	// Exited output is retained regardless of age while under budget.
+	reg.ReapExited(300)
+	test.That(t, listed(oldest), test.ShouldBeTrue)
+	test.That(t, listed(middle), test.ShouldBeTrue)
+	test.That(t, listed(newest), test.ShouldBeTrue)
+
+	// Over budget: the oldest exited command goes first.
+	reg.ReapExited(250)
+	test.That(t, listed(oldest), test.ShouldBeFalse)
+	test.That(t, listed(middle), test.ShouldBeTrue)
+	test.That(t, listed(newest), test.ShouldBeTrue)
+
+	// Attached commands are never reaped, even when over budget.
+	handle := middle.attach()
+	defer middle.ClientGone(handle)
+
+	reg.ReapExited(50)
+	test.That(t, listed(middle), test.ShouldBeTrue)
+	test.That(t, listed(newest), test.ShouldBeFalse)
+}

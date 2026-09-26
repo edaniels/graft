@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mutagen-io/mutagen/pkg/logging"
 	"github.com/mutagen-io/mutagen/pkg/selection"
@@ -358,4 +360,98 @@ func TestSyncFilesToConnectionRejectsRelativeSourceDirWithoutLocalRoot(t *testin
 	})
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, err.Error(), test.ShouldContainSubstring, "no local root")
+}
+
+// blockingConnector parks every one-shot command until release is closed,
+// signaling entered when the first one starts.
+type blockingConnector struct {
+	echoConnector
+
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingConnector) RunOneShotCommand(ctx context.Context, cmd string) (string, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
+
+	return b.echoConnector.RunOneShotCommand(ctx, cmd)
+}
+
+func TestEstablishSynchronizationDoesNotHoldConnLockDuringIO(t *testing.T) {
+	localRoot := t.TempDir()
+	conn, mgr := newSyncTestConn(t, localRoot)
+
+	blocking := &blockingConnector{entered: make(chan struct{}), release: make(chan struct{})}
+	conn.lockedDaemon().connector = blocking
+
+	established := make(chan error, 1)
+
+	go func() {
+		_, err := conn.EstablishSynchronization(t.Context(), SynchronizationIntent{
+			FromLocal: localRoot,
+			ToRemote:  "/remote/x",
+		}, mgr)
+		established <- err
+	}()
+
+	<-blocking.entered
+
+	// A slow remote (or a stuck local file read) during sync setup must not
+	// stall readers of the connection: status, cwd matching, and session
+	// restore all go through them.
+	readersDone := make(chan struct{})
+
+	go func() {
+		defer close(readersDone)
+
+		conn.State()
+		conn.LocalRoot()
+		conn.Synchronizations()
+		conn.MatchCWD(localRoot)
+	}()
+
+	select {
+	case <-readersDone:
+	case <-time.After(10 * time.Second):
+		test.That(t, "connection readers blocked behind sync setup I/O", test.ShouldBeEmpty)
+	}
+
+	close(blocking.release)
+	test.That(t, <-established, test.ShouldBeNil)
+	test.That(t, conn.Synchronizations(), test.ShouldHaveLength, 1)
+}
+
+func TestEstablishSynchronizationPausesSessionWhenClosedMidway(t *testing.T) {
+	localRoot := t.TempDir()
+	conn, mgr := newSyncTestConn(t, localRoot)
+
+	blocking := &blockingConnector{entered: make(chan struct{}), release: make(chan struct{})}
+	conn.lockedDaemon().connector = blocking
+
+	established := make(chan error, 1)
+
+	go func() {
+		_, err := conn.EstablishSynchronization(t.Context(), SynchronizationIntent{
+			FromLocal: localRoot,
+			ToRemote:  "/remote/x",
+		}, mgr)
+		established <- err
+	}()
+
+	<-blocking.entered
+
+	// Close does not wait for in-flight sync setup; the setup must notice and
+	// pause the session it created rather than leave it running untracked.
+	test.That(t, conn.Close(), test.ShouldBeNil)
+	close(blocking.release)
+
+	test.That(t, errors.Is(<-established, errConnectionClosedDuringSync), test.ShouldBeTrue)
+	test.That(t, conn.Synchronizations(), test.ShouldBeEmpty)
+
+	_, states, err := mgr.List(t.Context(), &selection.Selection{All: true}, 0)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, states, test.ShouldHaveLength, 1)
+	test.That(t, states[0].GetSession().GetPaused(), test.ShouldBeTrue)
 }

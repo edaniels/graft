@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mutagen-io/mutagen/pkg/synchronization"
@@ -32,6 +33,10 @@ type ConnectionManager struct {
 	schemes             map[string]ConnectorFactory
 	connectionRootsPath string // global file mapping local roots to connection names
 	connMgrMu           sync.Mutex
+
+	// published is a copy of connections republished on every mutation, for
+	// lookups that must not take connMgrMu (see lookupConnectionLockFree).
+	published atomic.Pointer[map[string]*Connection]
 }
 
 // NewConnectionManager returns a non-started ConnectionManager.
@@ -120,6 +125,7 @@ func (mgr *ConnectionManager) createConnection(
 
 	conn := newConnection(daemon, name, localRoot, remoteRoot, background)
 	mgr.connections[name] = conn
+	mgr.publishConnectionsLocked()
 	mgr.updateDaemonRemoteRoots(daemon)
 	mgr.writeConnectionRootsFile()
 
@@ -337,6 +343,28 @@ func (mgr *ConnectionManager) LookupConnection(name string) (*Connection, error)
 	return mgr.connection(name, false)
 }
 
+// publishConnectionsLocked republishes the lock-free connections snapshot.
+// Must be called with connMgrMu held after every change to connections.
+func (mgr *ConnectionManager) publishConnectionsLocked() {
+	snapshot := maps.Clone(mgr.connections)
+	mgr.published.Store(&snapshot)
+}
+
+// lookupConnectionLockFree returns an existing connection regardless of its
+// state without taking connMgrMu or conn.mu. It exists for callers that run
+// while a conn.mu is held (the sync resolver inside mutagen Create/Resume):
+// manager paths take connMgrMu then conn.mu, so taking connMgrMu there would
+// invert the lock order and deadlock.
+func (mgr *ConnectionManager) lookupConnectionLockFree(name string) (*Connection, error) {
+	if snapshot := mgr.published.Load(); snapshot != nil {
+		if conn, ok := (*snapshot)[name]; ok {
+			return conn, nil
+		}
+	}
+
+	return nil, errors.WrapSuffix(errConnectionNotFound, name)
+}
+
 // initialize sets up a new connection with a daemon running at the given destination.
 // The connection is created immediately so it appears in Connections() during initialization,
 // then the daemon is initialized. On failure the connection is cleaned up or left in Failed
@@ -437,6 +465,7 @@ func (mgr *ConnectionManager) initialize(
 		if destroyIfFail {
 			mgr.connMgrMu.Lock()
 			delete(mgr.connections, name)
+			mgr.publishConnectionsLocked()
 			mgr.releaseDaemon(daemon)
 			mgr.connMgrMu.Unlock()
 
@@ -746,6 +775,7 @@ func (mgr *ConnectionManager) remove(ctx context.Context, name string, safely bo
 	mgr.connMgrMu.Lock()
 
 	delete(mgr.connections, name)
+	mgr.publishConnectionsLocked()
 	mgr.updateDaemonRemoteRoots(conn.lockedDaemon())
 	mgr.writeConnectionRootsFile()
 

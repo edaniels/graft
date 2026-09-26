@@ -78,18 +78,22 @@ func (s activeSync) inheritModesInto(intent *SynchronizationIntent) {
 // It holds per-connection metadata (name, roots, forward intents, synchronizations)
 // and derives its state from the daemon.
 type Connection struct {
-	// daemon is atomic (not guarded by mu) so it can be read in contexts that
-	// already hold conn.mu: the mutagen sync protocol resolver reaches the
-	// daemon from within syncManager.Create/Resume, which
-	// EstablishSynchronization calls while holding mu. A mutex-guarded read
-	// self-deadlocks there (mutagen connects endpoints synchronously on the
-	// caller's goroutine).
+	// daemon is atomic (not guarded by mu) so the mutagen sync protocol
+	// resolver can reach it from within syncManager.Create/Resume without
+	// taking any connection lock (mutagen connects endpoints synchronously on
+	// the caller's goroutine).
 	daemon atomic.Pointer[remoteDaemon]
 
 	name       string
 	localRoot  string
 	remoteRoot string
 	background bool
+
+	// syncMu serializes sync setup and root changes for their full duration,
+	// including slow local file reads and remote I/O. It is taken before mu,
+	// and mu itself is only held briefly, so readers (status, cwd matching)
+	// never wait behind sync I/O.
+	syncMu sync.Mutex
 
 	mu               sync.Mutex
 	stateHash        uint32
@@ -482,6 +486,9 @@ func (conn *Connection) Roots() (string, string) {
 }
 
 func (conn *Connection) SetRoots(localRoot, remoteRoot string) error {
+	conn.syncMu.Lock()
+	defer conn.syncMu.Unlock()
+
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 
@@ -503,9 +510,8 @@ func (conn *Connection) SetRoots(localRoot, remoteRoot string) error {
 }
 
 // lockedDaemon returns the connection's current daemon. It is lock-free (the
-// pointer is atomic) so callers holding conn.mu - notably
-// EstablishSynchronization via mutagen's synchronous endpoint connects - and
-// the sync protocol resolver can use it without self-deadlocking.
+// pointer is atomic) so the sync protocol resolver, which runs inside
+// mutagen's synchronous endpoint connects, can use it without taking a lock.
 func (conn *Connection) lockedDaemon() *remoteDaemon {
 	return conn.daemon.Load()
 }
@@ -572,14 +578,18 @@ func (conn *Connection) EstablishSynchronization(
 	syncIntent SynchronizationIntent,
 	syncManager *synchronization.Manager,
 ) ([]string, error) {
-	conn.mu.Lock()
-	defer conn.mu.Unlock()
+	// syncMu, not mu, is held across the I/O below; syncMu makes this the only
+	// writer of synchronizations (Close aside), so the snapshot stays current.
+	conn.syncMu.Lock()
+	defer conn.syncMu.Unlock()
+
+	localRoot, synchronizations := conn.syncSnapshot()
 
 	// Canonicalize the local source before any map lookup or session naming:
 	// relative paths resolve against the connection's local root (never the
 	// daemon's cwd), so "." and the absolute spelling of one tree key and
 	// name a single session.
-	canonicalFrom, err := canonicalizeSyncFromLocal(conn.localRoot, syncIntent.FromLocal)
+	canonicalFrom, err := canonicalizeSyncFromLocal(localRoot, syncIntent.FromLocal)
 	if err != nil {
 		return nil, err
 	}
@@ -589,11 +599,11 @@ func (conn *Connection) EstablishSynchronization(
 	// Overlap is rejected outright: two sessions over one tree double-watch
 	// it and can fight over content (a two-way session containing a .git
 	// directory battles the one-way replica session managing it).
-	if overlapErr := checkSyncOverlap(conn.synchronizations, syncIntent.FromLocal); overlapErr != nil {
+	if overlapErr := checkSyncOverlap(synchronizations, syncIntent.FromLocal); overlapErr != nil {
 		return nil, overlapErr
 	}
 
-	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
+	if existing, ok := synchronizations[syncIntent.FromLocal]; ok {
 		existing.inheritModesInto(&syncIntent)
 
 		// Empty means "no opinion": a bare graft sync must not drop includes
@@ -605,7 +615,7 @@ func (conn *Connection) EstablishSynchronization(
 
 	// Fast path: when reconciling from config (which stores already-resolved paths),
 	// the intent matches an active sync exactly. Skip without doing any remote I/O.
-	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok &&
+	if existing, ok := synchronizations[syncIntent.FromLocal]; ok &&
 		existing.destination == syncIntent.ToRemote && existing.syncGit == syncIntent.SyncGit &&
 		syncModesCompatible(existing.defaultFileMode, existing.defaultDirectoryMode,
 			syncIntent.DefaultFileMode, syncIntent.DefaultDirectoryMode) &&
@@ -622,7 +632,7 @@ func (conn *Connection) EstablishSynchronization(
 
 	// Re-check after resolution: an unresolved intent (e.g., "~/foo") may now match
 	// an already-active resolved entry.
-	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok {
+	if existing, ok := synchronizations[syncIntent.FromLocal]; ok {
 		if existing.destination != syncIntent.ToRemote {
 			return nil, errors.Errorf(
 				"synchronization for %q already exists with destination %q (cannot override to %q)",
@@ -691,7 +701,7 @@ func (conn *Connection) EstablishSynchronization(
 	// The mode-change fall-through can be replacing an entry whose replica is
 	// being dropped along with the mode change; pause it now rather than
 	// leaving it replicating until the orphan reaper's next tick.
-	if existing, ok := conn.synchronizations[syncIntent.FromLocal]; ok &&
+	if existing, ok := synchronizations[syncIntent.FromLocal]; ok &&
 		existing.gitCloseFunc != nil && !syncIntent.SyncGit {
 		existing.gitCloseFunc()
 	}
@@ -706,7 +716,9 @@ func (conn *Connection) EstablishSynchronization(
 		defaultDirectoryMode: syncIntent.DefaultDirectoryMode,
 		syncInclude:          syncIntent.SyncInclude,
 	}
-	conn.synchronizations[syncIntent.FromLocal] = entry
+	if recordErr := conn.recordSync(syncIntent.FromLocal, entry); recordErr != nil {
+		return nil, recordErr
+	}
 
 	if syncIntent.SyncGit {
 		gitCloseFunc, gitErr := conn.establishGitReplica(ctx, syncManager, syncIntent)
@@ -716,7 +728,10 @@ func (conn *Connection) EstablishSynchronization(
 
 		entry.syncGit = true
 		entry.gitCloseFunc = gitCloseFunc
-		conn.synchronizations[syncIntent.FromLocal] = entry
+
+		if recordErr := conn.recordSync(syncIntent.FromLocal, entry); recordErr != nil {
+			return nil, recordErr
+		}
 	}
 
 	return shadowed, nil
@@ -752,7 +767,45 @@ func (conn *Connection) applyGitReplicaFlip(
 	}
 
 	existing.syncGit = syncIntent.SyncGit
-	conn.synchronizations[syncIntent.FromLocal] = existing
+
+	return conn.recordSync(syncIntent.FromLocal, existing)
+}
+
+// syncSnapshot returns the local root and a copy of the active syncs. Callers
+// hold syncMu, which keeps both stable until they record their result.
+func (conn *Connection) syncSnapshot() (string, map[string]activeSync) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	return conn.localRoot, maps.Clone(conn.synchronizations)
+}
+
+var errConnectionClosedDuringSync = errors.NewBare("connection closed while establishing synchronization")
+
+// recordSync stores an established sync. Close may have run while the sync
+// was being set up (it does not wait on syncMu); its sessions are then paused
+// here since Close never saw them.
+func (conn *Connection) recordSync(fromLocal string, entry activeSync) error {
+	conn.mu.Lock()
+	closed := conn.closed
+
+	if !closed {
+		conn.synchronizations[fromLocal] = entry
+	}
+
+	conn.mu.Unlock()
+
+	if closed {
+		if entry.closeFunc != nil {
+			entry.closeFunc()
+		}
+
+		if entry.gitCloseFunc != nil {
+			entry.gitCloseFunc()
+		}
+
+		return errors.Wrap(errConnectionClosedDuringSync)
+	}
 
 	return nil
 }

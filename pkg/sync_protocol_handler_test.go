@@ -2,6 +2,7 @@ package graft
 
 import (
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,39 +108,61 @@ func TestSyncConnResolver(t *testing.T) {
 		test.That(t, got, test.ShouldEqual, cc)
 	})
 
-	t.Run("resolves while the connection mutex is held", func(t *testing.T) {
-		cc, err := grpc.NewClient("passthrough:///unused", grpc.WithTransportCredentials(insecure.NewCredentials()))
-		test.That(t, err, test.ShouldBeNil)
-		t.Cleanup(func() { cc.Close() })
-
-		daemon.remoteConn = &fakeRemoteDaemonConn{cc: cc}
-
-		// The resolver runs inside mutagen's synchronous Create/Resume calls,
-		// which EstablishSynchronization makes while holding conn.mu. It must
-		// therefore never take conn.mu itself, or it self-deadlocks.
-		conn.mu.Lock()
-		defer conn.mu.Unlock()
-
-		done := make(chan struct{})
-
-		var got *grpc.ClientConn
-
-		var resolveErr error
-
-		go func() {
-			defer close(done)
-
-			got, resolveErr = resolver("c")
-		}()
-
-		select {
-		case <-done:
-			test.That(t, resolveErr, test.ShouldBeNil)
-			test.That(t, got, test.ShouldEqual, cc)
-		case <-time.After(10 * time.Second):
-			test.That(t, "resolver deadlocked on conn.mu", test.ShouldBeEmpty)
-		}
+	// The resolver runs inside mutagen's synchronous Create/Resume calls,
+	// which EstablishSynchronization makes while holding conn.syncMu. Taking
+	// syncMu would self-deadlock, and taking conn.mu or connMgrMu would stall
+	// on (or invert order against) paths that hold them.
+	t.Run("resolves while the connection sync mutex is held", func(t *testing.T) {
+		assertResolvesWhileLocked(t, resolver, daemon, &conn.syncMu)
 	})
+
+	t.Run("resolves while the connection mutex is held", func(t *testing.T) {
+		assertResolvesWhileLocked(t, resolver, daemon, &conn.mu)
+	})
+
+	t.Run("resolves while the connection manager mutex is held", func(t *testing.T) {
+		assertResolvesWhileLocked(t, resolver, daemon, &connMgr.connMgrMu)
+	})
+}
+
+// assertResolvesWhileLocked checks that resolving connection "c" completes
+// while lock is held by the caller.
+func assertResolvesWhileLocked(
+	t *testing.T,
+	resolver func(name string) (*grpc.ClientConn, error),
+	daemon *remoteDaemon,
+	lock sync.Locker,
+) {
+	t.Helper()
+
+	cc, err := grpc.NewClient("passthrough:///unused", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	test.That(t, err, test.ShouldBeNil)
+	t.Cleanup(func() { cc.Close() })
+
+	daemon.remoteConn = &fakeRemoteDaemonConn{cc: cc}
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	done := make(chan struct{})
+
+	var got *grpc.ClientConn
+
+	var resolveErr error
+
+	go func() {
+		defer close(done)
+
+		got, resolveErr = resolver("c")
+	}()
+
+	select {
+	case <-done:
+		test.That(t, resolveErr, test.ShouldBeNil)
+		test.That(t, got, test.ShouldEqual, cc)
+	case <-time.After(10 * time.Second):
+		test.That(t, "resolver deadlocked on held lock", test.ShouldBeEmpty)
+	}
 }
 
 func TestEstablishSynchronizationWithRealResolverDoesNotDeadlock(t *testing.T) {

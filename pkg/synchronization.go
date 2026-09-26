@@ -454,16 +454,16 @@ type mutagenSyncProtocolHandler struct {
 // rather than dialing through a nil conn).
 //
 // The resolver runs inside mutagen's synchronous Create/Resume calls, which
-// EstablishSynchronization makes while holding conn.mu, and inside
+// EstablishSynchronization makes while holding conn.syncMu, and inside
 // controller-initiated background reconnects, which can overlap a Terminate
-// that EstablishSynchronization waits on. It must therefore never acquire
-// conn.mu: LookupConnection skips the Connected-state check (which would take
-// it) and lockedDaemon is lock-free. A miss is fine either way: the daemon
-// either has a live transport to return or the error makes the controller
-// retry later.
+// that EstablishSynchronization waits on. It must therefore take no
+// connection or manager lock: lookupConnectionLockFree reads a published
+// snapshot and lockedDaemon is lock-free. A miss is fine either way: the
+// daemon either has a live transport to return or the error makes the
+// controller retry later.
 func syncConnResolver(mgr *ConnectionManager) func(name string) (*grpc.ClientConn, error) {
 	return func(name string) (*grpc.ClientConn, error) {
-		conn, err := mgr.LookupConnection(name)
+		conn, err := mgr.lookupConnectionLockFree(name)
 		if err != nil {
 			return nil, err
 		}
